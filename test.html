@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ComChat Test - 簡易版</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f0f0f0;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #667eea;
+            text-align: center;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #556dd4;
+        }
+        input {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin: 5px;
+            width: 200px;
+        }
+        #status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            background: #e9ecef;
+        }
+        .success {
+            background: #d4edda !important;
+            color: #155724;
+        }
+        .error {
+            background: #f8d7da !important;
+            color: #721c24;
+        }
+        video {
+            width: 300px;
+            height: 200px;
+            background: #000;
+            border-radius: 5px;
+            margin: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>ComChat 簡易テスト版</h1>
+        
+        <div class="section">
+            <h3>🔧 動作テスト</h3>
+            <button onclick="testPeerJS()">PeerJS読み込みテスト</button>
+            <button onclick="testCamera()">カメラテスト</button>
+            <button onclick="testMicrophone()">マイクテスト</button>
+            <div id="status">準備完了</div>
+        </div>
+
+        <div class="section">
+            <h3>📹 カメラプレビュー</h3>
+            <video id="localVideo" autoplay muted></video>
+        </div>
+
+        <div class="section">
+            <h3>🎯 接続テスト</h3>
+            <input type="text" id="peerId" placeholder="自分のID">
+            <button onclick="createPeer()">Peer作成</button>
+            <br>
+            <input type="text" id="targetId" placeholder="相手のID">
+            <button onclick="connectToPeer()">接続</button>
+        </div>
+
+        <div class="section">
+            <h3>💬 メッセージテスト</h3>
+            <input type="text" id="message" placeholder="メッセージ">
+            <button onclick="sendMessage()">送信</button>
+            <div id="messages"></div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
+    <script>
+        let peer = null;
+        let conn = null;
+        let localStream = null;
+
+        function showStatus(message, type = '') {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = type;
+            console.log('Status:', message);
+        }
+
+        function testPeerJS() {
+            if (typeof Peer !== 'undefined') {
+                showStatus('✅ PeerJS読み込み成功！', 'success');
+            } else {
+                showStatus('❌ PeerJS読み込み失敗', 'error');
+            }
+        }
+
+        async function testCamera() {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    video: true,
+                    audio: true
+                });
+                
+                const video = document.getElementById('localVideo');
+                video.srcObject = localStream;
+                
+                showStatus('✅ カメラ・マイクアクセス成功！', 'success');
+            } catch (error) {
+                showStatus('❌ カメラ・マイクアクセス失敗: ' + error.message, 'error');
+            }
+        }
+
+        async function testMicrophone() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                stream.getTracks().forEach(track => track.stop());
+                showStatus('✅ マイクアクセス成功！', 'success');
+            } catch (error) {
+                showStatus('❌ マイクアクセス失敗: ' + error.message, 'error');
+            }
+        }
+
+        function createPeer() {
+            const peerId = document.getElementById('peerId').value;
+            
+            try {
+                peer = new Peer(peerId || undefined);
+                
+                peer.on('open', (id) => {
+                    document.getElementById('peerId').value = id;
+                    showStatus('✅ Peer作成成功！ ID: ' + id, 'success');
+                });
+
+                peer.on('connection', (connection) => {
+                    conn = connection;
+                    setupConnection(conn);
+                    showStatus('✅ 相手から接続されました！', 'success');
+                });
+
+                peer.on('error', (error) => {
+                    showStatus('❌ Peerエラー: ' + error.message, 'error');
+                });
+
+            } catch (error) {
+                showStatus('❌ Peer作成失敗: ' + error.message, 'error');
+            }
+        }
+
+        function connectToPeer() {
+            const targetId = document.getElementById('targetId').value;
+            
+            if (!peer) {
+                showStatus('❌ 先にPeerを作成してください', 'error');
+                return;
+            }
+
+            if (!targetId) {
+                showStatus('❌ 相手のIDを入力してください', 'error');
+                return;
+            }
+
+            try {
+                conn = peer.connect(targetId);
+                setupConnection(conn);
+                showStatus('🔄 接続中...', '');
+            } catch (error) {
+                showStatus('❌ 接続失敗: ' + error.message, 'error');
+            }
+        }
+
+        function setupConnection(connection) {
+            connection.on('open', () => {
+                showStatus('✅ 接続成功！', 'success');
+            });
+
+            connection.on('data', (data) => {
+                const messages = document.getElementById('messages');
+                messages.innerHTML += '<div><strong>相手:</strong> ' + data + '</div>';
+            });
+
+            connection.on('error', (error) => {
+                showStatus('❌ 接続エラー: ' + error.message, 'error');
+            });
+        }
+
+        function sendMessage() {
+            const message = document.getElementById('message').value;
+            
+            if (!conn || !conn.open) {
+                showStatus('❌ 接続が確立されていません', 'error');
+                return;
+            }
+
+            if (!message) {
+                showStatus('❌ メッセージを入力してください', 'error');
+                return;
+            }
+
+            try {
+                conn.send(message);
+                const messages = document.getElementById('messages');
+                messages.innerHTML += '<div><strong>あなた:</strong> ' + message + '</div>';
+                document.getElementById('message').value = '';
+                showStatus('✅ メッセージ送信成功！', 'success');
+            } catch (error) {
+                showStatus('❌ メッセージ送信失敗: ' + error.message, 'error');
+            }
+        }
+
+        // ページ読み込み時にPeerJSテスト実行
+        window.addEventListener('load', () => {
+            setTimeout(testPeerJS, 1000);
+        });
+    </script>
+</body>
+</html>
