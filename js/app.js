@@ -6,10 +6,11 @@ class ComChat {
         this.localStream = null;
         this.connections = new Map();
         this.calls = new Map();
+        this.usernames = new Map();
         this.roomId = null;
         this.isHost = false;
-        this.username = 'User';
-        
+        this.username = 'ユーザー';
+
         this.initializeUI();
     }
 
@@ -20,8 +21,13 @@ class ComChat {
         this.chatMessages = document.getElementById('chat-messages');
         this.chatInput = document.getElementById('chat-input');
         this.statusDiv = document.getElementById('status');
-        
-        // Buttons
+        this.roomIdDisplay = document.getElementById('room-id-display');
+        this.participantCount = document.getElementById('participant-count');
+        this.roomInfoDiv = document.getElementById('room-info');
+        this.joinGroup = document.getElementById('join-group');
+        this.joinRoomIdInput = document.getElementById('join-room-id');
+        this.confirmJoinBtn = document.getElementById('confirm-join');
+
         this.createRoomBtn = document.getElementById('create-room');
         this.joinRoomBtn = document.getElementById('join-room');
         this.chatSendBtn = document.getElementById('chat-send');
@@ -29,10 +35,13 @@ class ComChat {
         this.toggleVideoBtn = document.getElementById('toggle-video');
         this.toggleAudioBtn = document.getElementById('toggle-audio');
         this.shareScreenBtn = document.getElementById('share-screen');
-        
-        // Event listeners
+
         this.createRoomBtn.addEventListener('click', () => this.createRoom());
-        this.joinRoomBtn.addEventListener('click', () => this.joinRoom());
+        this.joinRoomBtn.addEventListener('click', () => this.showJoinInput());
+        this.confirmJoinBtn.addEventListener('click', () => this.joinRoom());
+        this.joinRoomIdInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') this.joinRoom();
+        });
         this.chatSendBtn.addEventListener('click', () => this.sendMessage());
         this.chatInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') this.sendMessage();
@@ -43,26 +52,27 @@ class ComChat {
         this.shareScreenBtn.addEventListener('click', () => this.shareScreen());
     }
 
+    showJoinInput() {
+        this.joinGroup.classList.remove('hidden');
+        this.joinRoomIdInput.focus();
+    }
+
     async createRoom() {
         try {
             this.showStatus('ルームを作成中...', 'connecting');
-            
-            // Generate room ID
+
             this.roomId = this.generateRoomId();
             this.isHost = true;
-            
-            // Initialize peer
+
+            // getUserMedia before setupPeerEvents to avoid answering calls with null stream
             await this.initializePeer(this.roomId);
-            
-            // Get user media
             await this.getUserMedia();
-            
-            // Show call screen
+            this.setupPeerEvents();
+
             this.showCallScreen();
-            
-            // Display room ID for sharing
-            this.showStatus(`ルームID: ${this.roomId} (共有してください)`, 'connected');
-            
+            this.updateRoomInfo();
+            this.showStatus('ルームを作成しました。ルームIDを友達に共有してください', 'connected');
+
         } catch (error) {
             this.showStatus('ルーム作成に失敗しました: ' + error.message, 'error');
         }
@@ -70,25 +80,24 @@ class ComChat {
 
     async joinRoom() {
         try {
-            const roomId = prompt('ルームIDを入力してください:');
-            if (!roomId) return;
-            
+            const roomId = this.joinRoomIdInput.value.trim();
+            if (!roomId) {
+                this.showStatus('ルームIDを入力してください', 'error');
+                return;
+            }
+
             this.showStatus('ルームに参加中...', 'connecting');
             this.roomId = roomId;
             this.isHost = false;
-            
-            // Initialize peer
+
             await this.initializePeer();
-            
-            // Get user media
             await this.getUserMedia();
-            
-            // Connect to host
+            this.setupPeerEvents();
             await this.connectToHost(roomId);
-            
-            // Show call screen
+
             this.showCallScreen();
-            
+            this.updateRoomInfo();
+
         } catch (error) {
             this.showStatus('ルーム参加に失敗しました: ' + error.message, 'error');
         }
@@ -96,13 +105,10 @@ class ComChat {
 
     async initializePeer(id = null) {
         return new Promise((resolve, reject) => {
-            this.peer = new Peer(id, {
-                debug: 2
-            });
+            this.peer = new Peer(id, { debug: 2 });
 
             this.peer.on('open', (peerId) => {
                 console.log('Peer connected with ID:', peerId);
-                this.setupPeerEvents();
                 resolve(peerId);
             });
 
@@ -113,13 +119,12 @@ class ComChat {
         });
     }
 
+    // Called only after getUserMedia completes to guarantee localStream is ready
     setupPeerEvents() {
-        // Handle incoming connections
         this.peer.on('connection', (conn) => {
             this.handleConnection(conn);
         });
 
-        // Handle incoming calls
         this.peer.on('call', (call) => {
             this.handleIncomingCall(call);
         });
@@ -131,61 +136,65 @@ class ComChat {
                 video: true,
                 audio: true
             });
-            
-            // Display local video
             this.addVideoElement('local', this.localStream, 'あなた');
-            
         } catch (error) {
             throw new Error('カメラ/マイクへのアクセスが拒否されました');
         }
     }
 
     async connectToHost(hostId) {
-        // Connect for data channel
         const conn = this.peer.connect(hostId);
         this.handleConnection(conn);
-        
-        // Call host for video
+
         const call = this.peer.call(hostId, this.localStream);
         this.handleCall(call);
     }
 
     handleConnection(conn) {
+        // Enforce 6-person limit (5 remotes + self)
+        if (this.connections.size >= 5) {
+            conn.close();
+            return;
+        }
+
         this.connections.set(conn.peer, conn);
-        
+
         conn.on('open', () => {
             console.log('Data connection opened with:', conn.peer);
+            // Send own username so the remote side can display it
+            conn.send({ type: 'user-join', username: this.username });
             this.broadcastUserList();
+            this.updateRoomInfo();
         });
-        
+
         conn.on('data', (data) => {
             this.handleDataMessage(data, conn.peer);
         });
-        
+
         conn.on('close', () => {
             console.log('Connection closed with:', conn.peer);
             this.connections.delete(conn.peer);
+            this.usernames.delete(conn.peer);
             this.removeVideoElement(conn.peer);
             this.broadcastUserList();
+            this.updateRoomInfo();
         });
     }
 
     handleIncomingCall(call) {
-        // Answer with local stream
         call.answer(this.localStream);
         this.handleCall(call);
     }
 
     handleCall(call) {
         this.calls.set(call.peer, call);
-        
+
         call.on('stream', (remoteStream) => {
-            console.log('Received stream from:', call.peer);
-            this.addVideoElement(call.peer, remoteStream, call.peer);
+            const label = this.usernames.get(call.peer) || call.peer;
+            this.addVideoElement(call.peer, remoteStream, label);
         });
-        
+
         call.on('close', () => {
-            console.log('Call closed with:', call.peer);
             this.calls.delete(call.peer);
             this.removeVideoElement(call.peer);
         });
@@ -196,30 +205,49 @@ class ComChat {
             case 'chat':
                 this.displayChatMessage(data.username, data.message);
                 break;
+            case 'user-join': {
+                this.usernames.set(senderId, data.username);
+                // Update label if the video element already exists
+                const labelDiv = document.querySelector(`#video-${senderId} .video-label`);
+                if (labelDiv) labelDiv.textContent = data.username;
+                break;
+            }
             case 'user-list':
                 this.updateUserList(data.users);
                 break;
         }
     }
 
+    updateUserList(users) {
+        if (this.participantCount) {
+            this.participantCount.textContent = users.length;
+        }
+    }
+
+    updateRoomInfo() {
+        this.roomInfoDiv.classList.remove('hidden');
+        this.roomIdDisplay.textContent = this.roomId;
+        this.participantCount.textContent = this.connections.size + 1;
+    }
+
     addVideoElement(id, stream, label) {
-        // Remove existing video if any
         this.removeVideoElement(id);
-        
+
         const videoContainer = document.createElement('div');
         videoContainer.className = 'video-container';
         videoContainer.id = `video-${id}`;
-        
+
         const video = document.createElement('video');
         video.className = 'video-element';
         video.srcObject = stream;
         video.autoplay = true;
-        video.muted = id === 'local'; // Mute local video to prevent echo
-        
+        video.playsInline = true; // Required for iOS Safari
+        video.muted = id === 'local';
+
         const labelDiv = document.createElement('div');
         labelDiv.className = 'video-label';
         labelDiv.textContent = label;
-        
+
         videoContainer.appendChild(video);
         videoContainer.appendChild(labelDiv);
         this.videoGrid.appendChild(videoContainer);
@@ -235,24 +263,26 @@ class ComChat {
     sendMessage() {
         const message = this.chatInput.value.trim();
         if (!message) return;
-        
-        // Display locally
+
         this.displayChatMessage(this.username, message);
-        
-        // Send to all connections
-        const data = {
+
+        this.broadcast({
             type: 'chat',
             username: this.username,
             message: message
-        };
-        
-        this.broadcast(data);
+        });
+
         this.chatInput.value = '';
     }
 
     displayChatMessage(username, message) {
         const messageDiv = document.createElement('div');
-        messageDiv.innerHTML = `<strong>${username}:</strong> ${message}`;
+        const strong = document.createElement('strong');
+        strong.textContent = username + ':';
+        const span = document.createElement('span');
+        span.textContent = ' ' + message;
+        messageDiv.appendChild(strong);
+        messageDiv.appendChild(span);
         this.chatMessages.appendChild(messageDiv);
         this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
     }
@@ -268,13 +298,7 @@ class ComChat {
     broadcastUserList() {
         const users = Array.from(this.connections.keys());
         users.push(this.peer.id);
-        
-        const data = {
-            type: 'user-list',
-            users: users
-        };
-        
-        this.broadcast(data);
+        this.broadcast({ type: 'user-list', users });
     }
 
     async toggleVideo() {
@@ -303,75 +327,67 @@ class ComChat {
                 video: true,
                 audio: true
             });
-            
-            // Replace video track in all calls
-            const videoTrack = screenStream.getVideoTracks()[0];
-            
+
+            const screenVideoTrack = screenStream.getVideoTracks()[0];
+            // Save camera track to restore later (don't stop it)
+            const cameraVideoTrack = this.localStream.getVideoTracks()[0];
+
             this.calls.forEach((call) => {
-                const sender = call.peerConnection.getSenders().find(s => 
+                const sender = call.peerConnection.getSenders().find(s =>
                     s.track && s.track.kind === 'video'
                 );
-                if (sender) {
-                    sender.replaceTrack(videoTrack);
-                }
+                if (sender) sender.replaceTrack(screenVideoTrack);
             });
-            
-            // Update local video
+
+            // Update local preview without touching this.localStream
             const localVideo = document.querySelector('#video-local video');
             if (localVideo) {
-                localVideo.srcObject = screenStream;
+                const previewStream = new MediaStream([screenVideoTrack, ...this.localStream.getAudioTracks()]);
+                localVideo.srcObject = previewStream;
             }
-            
-            // Switch back when screen share ends
-            videoTrack.onended = () => {
-                this.getUserMedia().then(() => {
-                    const cameraTrack = this.localStream.getVideoTracks()[0];
-                    this.calls.forEach((call) => {
-                        const sender = call.peerConnection.getSenders().find(s => 
-                            s.track && s.track.kind === 'video'
-                        );
-                        if (sender) {
-                            sender.replaceTrack(cameraTrack);
-                        }
-                    });
+
+            screenVideoTrack.onended = () => {
+                screenStream.getTracks().forEach(t => t.stop());
+
+                this.calls.forEach((call) => {
+                    const sender = call.peerConnection.getSenders().find(s =>
+                        s.track && s.track.kind === 'video'
+                    );
+                    if (sender) sender.replaceTrack(cameraVideoTrack);
                 });
+
+                // Restore local preview to original camera stream
+                if (localVideo) localVideo.srcObject = this.localStream;
             };
-            
+
         } catch (error) {
-            console.error('Screen share failed:', error);
-            this.showStatus('画面共有に失敗しました', 'error');
+            // NotAllowedError means the user cancelled — not an error worth showing
+            if (error.name !== 'NotAllowedError') {
+                this.showStatus('画面共有に失敗しました', 'error');
+            }
         }
     }
 
     hangup() {
-        // Close all connections
-        this.connections.forEach((conn) => {
-            conn.close();
-        });
+        this.connections.forEach((conn) => conn.close());
         this.connections.clear();
-        
-        // Close all calls
-        this.calls.forEach((call) => {
-            call.close();
-        });
+
+        this.calls.forEach((call) => call.close());
         this.calls.clear();
-        
-        // Stop local stream
+
+        this.usernames.clear();
+
         if (this.localStream) {
             this.localStream.getTracks().forEach(track => track.stop());
             this.localStream = null;
         }
-        
-        // Close peer
+
         if (this.peer) {
             this.peer.destroy();
             this.peer = null;
         }
-        
-        // Clear video grid
+
         this.videoGrid.innerHTML = '';
-        
-        // Show welcome screen
         this.showWelcomeScreen();
         this.showStatus('通話を終了しました', 'connected');
     }
@@ -379,6 +395,9 @@ class ComChat {
     showWelcomeScreen() {
         this.welcomeScreen.classList.remove('hidden');
         this.callScreen.classList.add('hidden');
+        this.roomInfoDiv.classList.add('hidden');
+        this.joinGroup.classList.add('hidden');
+        this.joinRoomIdInput.value = '';
     }
 
     showCallScreen() {
@@ -392,20 +411,16 @@ class ComChat {
     }
 
     generateRoomId() {
-        return Math.random().toString(36).substr(2, 9);
+        return Math.random().toString(36).slice(2, 11);
     }
 }
 
-// Initialize app when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     window.comChat = new ComChat();
-    
-    // Set initial username
+
     const usernameInput = document.getElementById('username');
     if (usernameInput) {
         window.comChat.username = usernameInput.value || 'ユーザー';
-        
-        // Update username when input changes
         usernameInput.addEventListener('input', (e) => {
             window.comChat.username = e.target.value || 'ユーザー';
         });
