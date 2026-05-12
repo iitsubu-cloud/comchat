@@ -150,10 +150,14 @@ class ComChat {
     }
 
     async connectToHost(hostId) {
-        const conn = this.peer.connect(hostId);
-        this.handleConnection(conn);
+        this.connectToPeer(hostId);
+    }
 
-        const call = this.peer.call(hostId, this.localStream);
+    connectToPeer(peerId) {
+        if (this.connections.has(peerId)) return;
+        const conn = this.peer.connect(peerId);
+        this.handleConnection(conn);
+        const call = this.peer.call(peerId, this.localStream);
         this.handleCall(call);
     }
 
@@ -167,9 +171,15 @@ class ComChat {
         this.connections.set(conn.peer, conn);
 
         conn.on('open', () => {
-            console.log('Data connection opened with:', conn.peer);
-            // Send own username so the remote side can display it
             conn.send({ type: 'user-join', username: this.username });
+            if (this.isHost) {
+                const existingPeers = Array.from(this.connections.keys())
+                    .filter(id => id !== conn.peer)
+                    .map(id => ({ id, username: this.usernames.get(id) || 'ユーザー' }));
+                if (existingPeers.length > 0) {
+                    conn.send({ type: 'peer-list', peers: existingPeers });
+                }
+            }
             this.broadcastUserList();
             this.updateRoomInfo();
         });
@@ -223,6 +233,14 @@ class ComChat {
             }
             case 'user-list':
                 this.updateUserList(data.users);
+                break;
+            case 'peer-list':
+                data.peers.forEach(({ id, username }) => {
+                    if (!this.connections.has(id) && id !== this.peer.id) {
+                        if (username) this.usernames.set(id, username);
+                        this.connectToPeer(id);
+                    }
+                });
                 break;
             case 'screen-share-start':
                 this.enterRemotePresenterMode(data.peerId, data.username);
