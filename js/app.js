@@ -20,7 +20,7 @@ class ComChat {
         this.videoGrid = document.getElementById('video-grid');
         this.chatMessages = document.getElementById('chat-messages');
         this.chatInput = document.getElementById('chat-input');
-        this.statusDiv = document.getElementById('status');
+        this.statusDiv = document.getElementById('status'); // may be null if removed from HTML
         this.roomIdDisplay = document.getElementById('room-id-display');
         this.participantCount = document.getElementById('participant-count');
         this.roomInfoDiv = document.getElementById('room-info');
@@ -28,6 +28,9 @@ class ComChat {
         this.joinRoomIdInput = document.getElementById('join-room-id');
         this.confirmJoinBtn = document.getElementById('confirm-join');
 
+        this.callMain = document.querySelector('.call-main');
+        this.screenShareContainer = document.getElementById('screen-share-container');
+        this.screenShareVideo = document.getElementById('screen-share-video');
         this.createRoomBtn = document.getElementById('create-room');
         this.joinRoomBtn = document.getElementById('join-room');
         this.chatSendBtn = document.getElementById('chat-send');
@@ -35,6 +38,9 @@ class ComChat {
         this.toggleVideoBtn = document.getElementById('toggle-video');
         this.toggleAudioBtn = document.getElementById('toggle-audio');
         this.shareScreenBtn = document.getElementById('share-screen');
+        this.stopShareBtn = document.getElementById('stop-share-btn');
+        this.shareViewerLabel = document.getElementById('share-viewer-label');
+        this.screenSharePlaceholder = document.getElementById('screen-share-placeholder');
 
         this.createRoomBtn.addEventListener('click', () => this.createRoom());
         this.joinRoomBtn.addEventListener('click', () => this.showJoinInput());
@@ -50,6 +56,7 @@ class ComChat {
         this.toggleVideoBtn.addEventListener('click', () => this.toggleVideo());
         this.toggleAudioBtn.addEventListener('click', () => this.toggleAudio());
         this.shareScreenBtn.addEventListener('click', () => this.shareScreen());
+        this.stopShareBtn.addEventListener('click', () => this.stopScreenShare());
     }
 
     showJoinInput() {
@@ -105,7 +112,7 @@ class ComChat {
 
     async initializePeer(id = null) {
         return new Promise((resolve, reject) => {
-            this.peer = new Peer(id, { debug: 2 });
+            this.peer = new Peer(id, { debug: 0 });
 
             this.peer.on('open', (peerId) => {
                 console.log('Peer connected with ID:', peerId);
@@ -172,10 +179,12 @@ class ComChat {
         });
 
         conn.on('close', () => {
-            console.log('Connection closed with:', conn.peer);
             this.connections.delete(conn.peer);
             this.usernames.delete(conn.peer);
             this.removeVideoElement(conn.peer);
+            if (this.currentRemoteSharerId === conn.peer) {
+                this.exitRemotePresenterMode();
+            }
             this.broadcastUserList();
             this.updateRoomInfo();
         });
@@ -215,6 +224,12 @@ class ComChat {
             case 'user-list':
                 this.updateUserList(data.users);
                 break;
+            case 'screen-share-start':
+                this.enterRemotePresenterMode(data.peerId, data.username);
+                break;
+            case 'screen-share-stop':
+                this.exitRemotePresenterMode();
+                break;
         }
     }
 
@@ -251,6 +266,7 @@ class ComChat {
         videoContainer.appendChild(video);
         videoContainer.appendChild(labelDiv);
         this.videoGrid.appendChild(videoContainer);
+        video.play().catch(() => {});
     }
 
     removeVideoElement(id) {
@@ -329,9 +345,12 @@ class ComChat {
             });
 
             const screenVideoTrack = screenStream.getVideoTracks()[0];
-            // Save camera track to restore later (don't stop it)
             const cameraVideoTrack = this.localStream.getVideoTracks()[0];
 
+            this.currentScreenStream = screenStream;
+            this.cameraVideoTrack = cameraVideoTrack;
+
+            // Send screen to remote peers
             this.calls.forEach((call) => {
                 const sender = call.peerConnection.getSenders().find(s =>
                     s.track && s.track.kind === 'video'
@@ -339,36 +358,75 @@ class ComChat {
                 if (sender) sender.replaceTrack(screenVideoTrack);
             });
 
-            // Update local preview without touching this.localStream
-            const localVideo = document.querySelector('#video-local video');
-            if (localVideo) {
-                const previewStream = new MediaStream([screenVideoTrack, ...this.localStream.getAudioTracks()]);
-                localVideo.srcObject = previewStream;
-            }
+            this.screenShareVideo.srcObject = screenStream;
+            this.screenShareVideo.muted = true;
+            this.screenShareVideo.classList.remove('hidden');
+            this.screenSharePlaceholder.classList.add('hidden');
+            this.screenShareContainer.classList.remove('hidden');
+            this.callMain.classList.add('presenter-mode');
+            this.shareViewerLabel.classList.add('hidden');
+            this.stopShareBtn.classList.remove('hidden');
 
-            screenVideoTrack.onended = () => {
-                screenStream.getTracks().forEach(t => t.stop());
+            screenVideoTrack.onended = () => this.stopScreenShare();
 
-                this.calls.forEach((call) => {
-                    const sender = call.peerConnection.getSenders().find(s =>
-                        s.track && s.track.kind === 'video'
-                    );
-                    if (sender) sender.replaceTrack(cameraVideoTrack);
-                });
-
-                // Restore local preview to original camera stream
-                if (localVideo) localVideo.srcObject = this.localStream;
-            };
+            this.broadcast({ type: 'screen-share-start', peerId: this.peer.id, username: this.username });
 
         } catch (error) {
-            // NotAllowedError means the user cancelled — not an error worth showing
             if (error.name !== 'NotAllowedError') {
                 this.showStatus('画面共有に失敗しました', 'error');
             }
         }
     }
 
+    enterRemotePresenterMode(sharerPeerId, sharerUsername) {
+        this.currentRemoteSharerId = sharerPeerId;
+        // 視聴者側はグリッド表示のまま。バナーのみ表示してループを防ぐ
+        this.shareViewerLabel.textContent = `${sharerUsername || sharerPeerId} が共有中`;
+        this.shareViewerLabel.classList.remove('hidden');
+        this.shareViewerLabel.style.position = 'fixed';
+        this.shareViewerLabel.style.bottom = '12px';
+        this.shareViewerLabel.style.left = '12px';
+        this.shareViewerLabel.style.zIndex = '1000';
+    }
+
+    exitRemotePresenterMode() {
+        this.currentRemoteSharerId = null;
+        this.shareViewerLabel.classList.add('hidden');
+        this.shareViewerLabel.style.position = '';
+        this.shareViewerLabel.style.bottom = '';
+        this.shareViewerLabel.style.left = '';
+        this.shareViewerLabel.style.zIndex = '';
+    }
+
+    stopScreenShare() {
+        if (!this.currentScreenStream) return;
+
+        this.currentScreenStream.getTracks().forEach(t => t.stop());
+
+        // Restore remote peers to camera
+        this.calls.forEach((call) => {
+            const sender = call.peerConnection.getSenders().find(s =>
+                s.track && s.track.kind === 'video'
+            );
+            if (sender && this.cameraVideoTrack) sender.replaceTrack(this.cameraVideoTrack);
+        });
+
+        // Restore grid layout
+        this.screenShareVideo.srcObject = null;
+        this.screenShareVideo.classList.remove('hidden');
+        this.screenSharePlaceholder.classList.add('hidden');
+        this.screenShareContainer.classList.add('hidden');
+
+        this.callMain.classList.remove('presenter-mode');
+        this.stopShareBtn.classList.add('hidden');
+        this.currentScreenStream = null;
+        this.broadcast({ type: 'screen-share-stop' });
+        this.cameraVideoTrack = null;
+    }
+
     hangup() {
+        if (this.currentScreenStream) this.stopScreenShare();
+
         this.connections.forEach((conn) => conn.close());
         this.connections.clear();
 
@@ -406,6 +464,7 @@ class ComChat {
     }
 
     showStatus(message, type) {
+        if (!this.statusDiv) return;
         this.statusDiv.textContent = message;
         this.statusDiv.className = `status ${type}`;
     }
@@ -417,6 +476,13 @@ class ComChat {
 
 document.addEventListener('DOMContentLoaded', () => {
     window.comChat = new ComChat();
+
+    // Safari autoplay policy: resume paused videos on first user interaction
+    document.addEventListener('click', () => {
+        document.querySelectorAll('video').forEach(v => {
+            if (v.paused) v.play().catch(() => {});
+        });
+    }, { once: true });
 
     const usernameInput = document.getElementById('username');
     if (usernameInput) {
