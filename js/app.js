@@ -251,10 +251,8 @@ class ComChat {
         }
     }
 
-    updateUserList(users) {
-        if (this.participantCount) {
-            this.participantCount.textContent = users.length;
-        }
+    updateUserList(_users) {
+        // participant count is managed solely by updateRoomInfo()
     }
 
     updateRoomInfo() {
@@ -431,7 +429,7 @@ class ComChat {
 
         // Restore grid layout
         this.screenShareVideo.srcObject = null;
-        this.screenShareVideo.classList.remove('hidden');
+        this.screenShareVideo.classList.add('hidden');
         this.screenSharePlaceholder.classList.add('hidden');
         this.screenShareContainer.classList.add('hidden');
 
@@ -463,6 +461,12 @@ class ComChat {
             this.peer = null;
         }
 
+        this.isHost = false;
+        this.roomId = null;
+        this.currentRemoteSharerId = null;
+        this.currentScreenStream = null;
+        this.cameraVideoTrack = null;
+
         this.videoGrid.innerHTML = '';
         this.showWelcomeScreen();
         this.showStatus('通話を終了しました', 'connected');
@@ -482,9 +486,15 @@ class ComChat {
     }
 
     showStatus(message, type) {
-        if (!this.statusDiv) return;
-        this.statusDiv.textContent = message;
-        this.statusDiv.className = `status ${type}`;
+        if (this.statusDiv) {
+            this.statusDiv.textContent = message;
+            this.statusDiv.className = `status ${type}`;
+        }
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
     }
 
     generateRoomId() {
