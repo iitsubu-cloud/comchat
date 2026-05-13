@@ -167,6 +167,27 @@ body {
     font-size: 0.9em;
 }
 
+/* マイクミュートインジケーター */
+.mute-indicator {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    width: 30px;
+    height: 30px;
+    background: rgba(220, 53, 69, 0.75);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    backdrop-filter: blur(2px);
+}
+
+.mute-indicator svg {
+    width: 16px;
+    height: 16px;
+}
+
 /* Presenter layout (screen sharing) */
 .call-main.presenter-mode {
     position: relative;

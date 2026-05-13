@@ -10,6 +10,8 @@ class ComChat {
         this.roomId = null;
         this.isHost = false;
         this.username = 'ユーザー';
+        this.isAudioMuted = false;
+        this.muteStates = new Map();
 
         this.initializeUI();
     }
@@ -188,6 +190,7 @@ class ComChat {
 
         conn.on('open', () => {
             conn.send({ type: 'user-join', username: this.username });
+            conn.send({ type: 'mute-state', muted: this.isAudioMuted });
             if (this.isHost) {
                 const existingPeers = Array.from(this.connections.keys())
                     .filter(id => id !== conn.peer)
@@ -207,6 +210,7 @@ class ComChat {
         conn.on('close', () => {
             this.connections.delete(conn.peer);
             this.usernames.delete(conn.peer);
+            this.muteStates.delete(conn.peer);
             this.removeVideoElement(conn.peer);
             if (this.currentRemoteSharerId === conn.peer) {
                 this.exitRemotePresenterMode();
@@ -257,6 +261,10 @@ class ComChat {
                         this.connectToPeer(id);
                     }
                 });
+                break;
+            case 'mute-state':
+                this.muteStates.set(senderId, data.muted);
+                this.setMuteIndicator(senderId, data.muted);
                 break;
             case 'screen-share-start':
                 this.enterRemotePresenterMode(data.peerId, data.username);
@@ -325,8 +333,15 @@ class ComChat {
         labelDiv.className = 'video-label';
         labelDiv.textContent = label;
 
+        const muteIndicator = document.createElement('div');
+        muteIndicator.className = 'mute-indicator hidden';
+        muteIndicator.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/><line x1="20" y1="4" x2="4" y2="20" stroke-width="2.5"/></svg>`;
+        if (id === 'local' && this.isAudioMuted) muteIndicator.classList.remove('hidden');
+        if (id !== 'local' && this.muteStates.get(id)) muteIndicator.classList.remove('hidden');
+
         videoContainer.appendChild(video);
         videoContainer.appendChild(labelDiv);
+        videoContainer.appendChild(muteIndicator);
         this.videoGrid.appendChild(videoContainer);
         video.play().catch(() => {});
     }
@@ -394,9 +409,17 @@ class ComChat {
             const audioTrack = this.localStream.getAudioTracks()[0];
             if (audioTrack) {
                 audioTrack.enabled = !audioTrack.enabled;
-                this.toggleAudioBtn.classList.toggle('off', !audioTrack.enabled);
+                this.isAudioMuted = !audioTrack.enabled;
+                this.toggleAudioBtn.classList.toggle('off', this.isAudioMuted);
+                this.setMuteIndicator('local', this.isAudioMuted);
+                this.broadcast({ type: 'mute-state', muted: this.isAudioMuted });
             }
         }
+    }
+
+    setMuteIndicator(id, isMuted) {
+        const indicator = document.querySelector(`#video-${id} .mute-indicator`);
+        if (indicator) indicator.classList.toggle('hidden', !isMuted);
     }
 
     async shareScreen() {
@@ -524,6 +547,8 @@ class ComChat {
 
         this.isHost = false;
         this.roomId = null;
+        this.isAudioMuted = false;
+        this.muteStates.clear();
         this.currentRemoteSharerId = null;
         this.currentScreenStream = null;
         this.cameraVideoTrack = null;
