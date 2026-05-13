@@ -399,22 +399,37 @@ class ComChat {
 
     enterRemotePresenterMode(sharerPeerId, sharerUsername) {
         this.currentRemoteSharerId = sharerPeerId;
-        // 視聴者側はグリッド表示のまま。バナーのみ表示してループを防ぐ
+
+        const sharerVideoEl = document.querySelector(`#video-${sharerPeerId} .video-element`);
+        if (sharerVideoEl && sharerVideoEl.srcObject) {
+            this.screenShareVideo.srcObject = sharerVideoEl.srcObject;
+            this.screenShareVideo.classList.remove('hidden');
+            this.screenSharePlaceholder.classList.add('hidden');
+        } else {
+            this.screenShareVideo.classList.add('hidden');
+            this.screenSharePlaceholder.classList.remove('hidden');
+        }
+
+        this.screenShareContainer.classList.remove('hidden');
+        this.callMain.classList.add('presenter-mode');
+        this.stopShareBtn.classList.add('hidden');
+
         this.shareViewerLabel.textContent = `${sharerUsername || sharerPeerId} が共有中`;
         this.shareViewerLabel.classList.remove('hidden');
-        this.shareViewerLabel.style.position = 'fixed';
-        this.shareViewerLabel.style.bottom = '12px';
-        this.shareViewerLabel.style.left = '12px';
-        this.shareViewerLabel.style.zIndex = '1000';
-    }
-
-    exitRemotePresenterMode() {
-        this.currentRemoteSharerId = null;
-        this.shareViewerLabel.classList.add('hidden');
         this.shareViewerLabel.style.position = '';
         this.shareViewerLabel.style.bottom = '';
         this.shareViewerLabel.style.left = '';
         this.shareViewerLabel.style.zIndex = '';
+    }
+
+    exitRemotePresenterMode() {
+        this.currentRemoteSharerId = null;
+        this.screenShareVideo.srcObject = null;
+        this.screenShareVideo.classList.add('hidden');
+        this.screenSharePlaceholder.classList.add('hidden');
+        this.screenShareContainer.classList.add('hidden');
+        this.callMain.classList.remove('presenter-mode');
+        this.shareViewerLabel.classList.add('hidden');
     }
 
     stopScreenShare() {
