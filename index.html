@@ -118,7 +118,7 @@
 
                         <!-- Room Info -->
                         <div id="room-info" class="room-info hidden">
-                            <span>ルームID: <span id="room-id-display"></span><button id="copy-room-id" class="copy-btn" title="ルームIDをコピー">📋</button></span>
+                            <span>ルームID: <span id="room-id-display"></span><button id="copy-room-id" class="copy-btn" title="ルームIDをコピー"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="0" width="11" height="11" rx="2"/><rect x="0" y="5" width="11" height="11" rx="2"/></svg></button></span>
                             <span>参加者: <span id="participant-count">1</span>/6</span>
                             <span class="username-info">名前: <span id="username-current"></span> <button id="edit-username-btn" class="copy-btn edit-btn" title="名前を変更">✏️</button><input id="username-edit-input" class="username-edit-input hidden" type="text" maxlength="20"><button id="username-confirm-btn" class="copy-btn confirm-btn hidden">✓</button></span>
                         </div>
@@ -141,7 +141,7 @@
 
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
-    <script src="js/app.js?v=3"></script>
+    <script src="js/app.js?v=4"></script>
 
     <script>
         // Handle page unload
@@ -204,12 +204,15 @@
             border: 1px solid transparent;
             cursor: pointer;
             font-size: 0.85em;
-            padding: 2px 5px;
+            padding: 3px 5px;
             border-radius: 4px;
             margin-left: 4px;
             vertical-align: middle;
             transition: background 0.15s, border-color 0.15s;
             line-height: 1;
+            color: #667eea;
+            display: inline-flex;
+            align-items: center;
         }
 
         .copy-btn:hover {

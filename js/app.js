@@ -559,10 +559,12 @@ class ComChat {
     }
 
     async copyRoomId() {
+        const copyIcon = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="0" width="11" height="11" rx="2"/><rect x="0" y="5" width="11" height="11" rx="2"/></svg>`;
+        const checkIcon = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#28a745" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 8 6 13 14 3"/></svg>`;
         try {
             await navigator.clipboard.writeText(this.roomId);
-            this.copyRoomIdBtn.textContent = '✅';
-            setTimeout(() => { this.copyRoomIdBtn.textContent = '📋'; }, 2000);
+            this.copyRoomIdBtn.innerHTML = checkIcon;
+            setTimeout(() => { this.copyRoomIdBtn.innerHTML = copyIcon; }, 2000);
             this.showStatus('ルームIDをコピーしました', 'connected');
         } catch {
             this.showStatus('コピーに失敗しました', 'error');
