@@ -86,7 +86,7 @@
                         <div id="room-info" class="room-info hidden">
                             <span>ルームID: <span id="room-id-display"></span><button id="copy-room-id" class="copy-btn" title="ルームIDをコピー">📋</button></span>
                             <span>参加者: <span id="participant-count">1</span>/6</span>
-                            <span class="username-info">名前: <span id="username-current"></span><button id="edit-username-btn" class="copy-btn" title="名前を変更">✏️</button><input id="username-edit-input" class="username-edit-input hidden" type="text" maxlength="20"><button id="username-confirm-btn" class="copy-btn confirm-btn hidden">✓</button></span>
+                            <span class="username-info">名前: <span id="username-current"></span> <button id="edit-username-btn" class="copy-btn edit-btn" title="名前を変更">✏️</button><input id="username-edit-input" class="username-edit-input hidden" type="text" maxlength="20"><button id="username-confirm-btn" class="copy-btn confirm-btn hidden">✓</button></span>
                         </div>
                     </div>
 
@@ -107,7 +107,7 @@
 
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
-    <script src="js/app.js?v=2"></script>
+    <script src="js/app.js?v=3"></script>
 
     <script>
         // Handle page unload
@@ -153,6 +153,11 @@
         }
 
         .confirm-btn { color: #28a745; font-weight: bold; }
+
+        .edit-btn {
+            display: inline-block;
+            transform: scaleX(-1);
+        }
 
         #room-id-display {
             font-weight: bold;
