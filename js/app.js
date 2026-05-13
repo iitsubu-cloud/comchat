@@ -223,6 +223,7 @@ class ComChat {
             if (this.currentRemoteSharerId === conn.peer) {
                 this.exitRemotePresenterMode();
             }
+            if (!this.peer) return; // hangup済みなら何もしない
             this.broadcastUserList();
             this.updateRoomInfo();
         });
@@ -397,6 +398,7 @@ class ComChat {
     }
 
     broadcastUserList() {
+        if (!this.peer) return;
         const users = Array.from(this.connections.keys());
         users.push(this.peer.id);
         this.broadcast({ type: 'user-list', users });
@@ -568,10 +570,14 @@ class ComChat {
 
     showHangupModal() {
         this.hangupModal.classList.remove('hidden');
+        // モーダル表示直後の誤タップ防止：300ms間は確認ボタンを無効化
+        this.hangupConfirmBtn.disabled = true;
+        setTimeout(() => { this.hangupConfirmBtn.disabled = false; }, 300);
     }
 
     hideHangupModal() {
         this.hangupModal.classList.add('hidden');
+        this.hangupConfirmBtn.disabled = false;
     }
 
     showWelcomeScreen() {

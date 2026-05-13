@@ -160,7 +160,7 @@
 
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
-    <script src="js/app.js?v=6"></script>
+    <script src="js/app.js?v=7"></script>
 
     <script>
         // Handle page unload
@@ -388,6 +388,12 @@
         .hangup-modal-btn.confirm:hover {
             background: #c82333;
             transform: scale(1.04);
+        }
+
+        .hangup-modal-btn.confirm:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
         }
 
         /* Mobile optimizations */
