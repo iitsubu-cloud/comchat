@@ -42,6 +42,9 @@ class ComChat {
         this.shareViewerLabel = document.getElementById('share-viewer-label');
         this.screenSharePlaceholder = document.getElementById('screen-share-placeholder');
 
+        this.copyRoomIdBtn = document.getElementById('copy-room-id');
+        this.copyRoomIdBtn.addEventListener('click', () => this.copyRoomId());
+
         this.createRoomBtn.addEventListener('click', () => this.createRoom());
         this.joinRoomBtn.addEventListener('click', () => this.showJoinInput());
         this.confirmJoinBtn.addEventListener('click', () => this.joinRoom());
@@ -495,6 +498,17 @@ class ComChat {
         toast.textContent = message;
         document.body.appendChild(toast);
         setTimeout(() => toast.remove(), 3000);
+    }
+
+    async copyRoomId() {
+        try {
+            await navigator.clipboard.writeText(this.roomId);
+            this.copyRoomIdBtn.textContent = '✅';
+            setTimeout(() => { this.copyRoomIdBtn.textContent = '📋'; }, 2000);
+            this.showStatus('ルームIDをコピーしました', 'connected');
+        } catch {
+            this.showStatus('コピーに失敗しました', 'error');
+        }
     }
 
     generateRoomId() {

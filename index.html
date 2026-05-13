@@ -84,7 +84,7 @@
 
                         <!-- Room Info -->
                         <div id="room-info" class="room-info hidden">
-                            ルームID: <span id="room-id-display"></span>　参加者: <span id="participant-count">1</span>/6
+                            ルームID: <span id="room-id-display"></span><button id="copy-room-id" class="copy-btn" title="ルームIDをコピー">📋</button>　参加者: <span id="participant-count">1</span>/6
                         </div>
                     </div>
 
@@ -141,6 +141,24 @@
             font-weight: bold;
             color: #667eea;
             font-family: monospace;
+        }
+
+        .copy-btn {
+            background: none;
+            border: 1px solid transparent;
+            cursor: pointer;
+            font-size: 0.85em;
+            padding: 2px 5px;
+            border-radius: 4px;
+            margin-left: 4px;
+            vertical-align: middle;
+            transition: background 0.15s, border-color 0.15s;
+            line-height: 1;
+        }
+
+        .copy-btn:hover {
+            background: rgba(102, 126, 234, 0.12);
+            border-color: rgba(102, 126, 234, 0.3);
         }
 
         /* Loading animation */
