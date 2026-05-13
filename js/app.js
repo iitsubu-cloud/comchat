@@ -12,6 +12,7 @@ class ComChat {
         this.username = 'ユーザー';
         this.isAudioMuted = false;
         this.muteStates = new Map();
+        this.isConnecting = false;
 
         this.initializeUI();
     }
@@ -91,13 +92,16 @@ class ComChat {
     }
 
     async createRoom() {
+        if (this.isConnecting) return;
+        this.isConnecting = true;
+        this.createRoomBtn.disabled = true;
+        this.joinRoomBtn.disabled = true;
         try {
             this.showStatus('ルームを作成中...', 'connecting');
 
             this.roomId = this.generateRoomId();
             this.isHost = true;
 
-            // getUserMedia before setupPeerEvents to avoid answering calls with null stream
             await this.initializePeer(this.roomId);
             await this.getUserMedia();
             this.setupPeerEvents();
@@ -107,18 +111,27 @@ class ComChat {
             this.showStatus('ルームを作成しました。ルームIDを友達に共有してください', 'connected');
 
         } catch (error) {
+            if (this.peer) { this.peer.destroy(); this.peer = null; }
+            this.isHost = false;
+            this.roomId = null;
+            this.createRoomBtn.disabled = false;
+            this.joinRoomBtn.disabled = false;
             this.showStatus('ルーム作成に失敗しました: ' + error.message, 'error');
+        } finally {
+            this.isConnecting = false;
         }
     }
 
     async joinRoom() {
+        if (this.isConnecting) return;
+        const roomId = this.joinRoomIdInput.value.trim();
+        if (!roomId) {
+            this.showStatus('ルームIDを入力してください', 'error');
+            return;
+        }
+        this.isConnecting = true;
+        this.confirmJoinBtn.disabled = true;
         try {
-            const roomId = this.joinRoomIdInput.value.trim();
-            if (!roomId) {
-                this.showStatus('ルームIDを入力してください', 'error');
-                return;
-            }
-
             this.showStatus('ルームに参加中...', 'connecting');
             this.roomId = roomId;
             this.isHost = false;
@@ -132,7 +145,12 @@ class ComChat {
             this.updateRoomInfo();
 
         } catch (error) {
+            if (this.peer) { this.peer.destroy(); this.peer = null; }
+            this.roomId = null;
+            this.confirmJoinBtn.disabled = false;
             this.showStatus('ルーム参加に失敗しました: ' + error.message, 'error');
+        } finally {
+            this.isConnecting = false;
         }
     }
 
@@ -196,6 +214,13 @@ class ComChat {
 
         this.connections.set(conn.peer, conn);
 
+        conn.on('error', (err) => {
+            console.error('Connection error:', err);
+            this.connections.delete(conn.peer);
+            this.usernames.delete(conn.peer);
+            this.muteStates.delete(conn.peer);
+        });
+
         conn.on('open', () => {
             conn.send({ type: 'user-join', username: this.username });
             conn.send({ type: 'mute-state', muted: this.isAudioMuted });
@@ -243,6 +268,12 @@ class ComChat {
         });
 
         call.on('close', () => {
+            this.calls.delete(call.peer);
+            this.removeVideoElement(call.peer);
+        });
+
+        call.on('error', (err) => {
+            console.error('Call error:', err);
             this.calls.delete(call.peer);
             this.removeVideoElement(call.peer);
         });
@@ -562,10 +593,17 @@ class ComChat {
         this.currentRemoteSharerId = null;
         this.currentScreenStream = null;
         this.cameraVideoTrack = null;
+        this.isConnecting = false;
+
+        // ボタンの視覚状態をリセット（再入室時に前の状態が残らないように）
+        this.toggleVideoBtn.classList.remove('off');
+        this.toggleAudioBtn.classList.remove('off');
+        this.createRoomBtn.disabled = false;
+        this.joinRoomBtn.disabled = false;
 
         this.videoGrid.innerHTML = '';
         this.showWelcomeScreen();
-        this.showStatus('通話を終了しました', 'connected');
+        this.showStatus('退室しました', 'connected');
     }
 
     showHangupModal() {

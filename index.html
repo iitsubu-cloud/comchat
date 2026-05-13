@@ -160,13 +160,17 @@
 
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
-    <script src="js/app.js?v=7"></script>
+    <script src="js/app.js?v=8"></script>
 
     <script>
-        // Handle page unload
+        // タブを閉じる/ページ遷移時にリソースだけ解放（UI操作は不要）
         window.addEventListener('beforeunload', () => {
-            if (window.comChat) {
-                window.comChat.hangup();
+            if (!window.comChat) return;
+            if (window.comChat.localStream) {
+                window.comChat.localStream.getTracks().forEach(t => t.stop());
+            }
+            if (window.comChat.peer) {
+                window.comChat.peer.destroy();
             }
         });
 
