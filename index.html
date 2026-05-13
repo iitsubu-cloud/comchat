@@ -84,7 +84,9 @@
 
                         <!-- Room Info -->
                         <div id="room-info" class="room-info hidden">
-                            ルームID: <span id="room-id-display"></span><button id="copy-room-id" class="copy-btn" title="ルームIDをコピー">📋</button>　参加者: <span id="participant-count">1</span>/6
+                            <span>ルームID: <span id="room-id-display"></span><button id="copy-room-id" class="copy-btn" title="ルームIDをコピー">📋</button></span>
+                            <span>参加者: <span id="participant-count">1</span>/6</span>
+                            <span class="username-info">名前: <span id="username-current"></span><button id="edit-username-btn" class="copy-btn" title="名前を変更">✏️</button><input id="username-edit-input" class="username-edit-input hidden" type="text" maxlength="20"><button id="username-confirm-btn" class="copy-btn confirm-btn hidden">✓</button></span>
                         </div>
                     </div>
 
@@ -133,9 +135,24 @@
             margin: 4px 0;
             font-size: 0.85em;
             color: #555;
-            white-space: nowrap;
             flex-shrink: 0;
+            display: flex;
+            gap: 14px;
+            align-items: center;
+            flex-wrap: wrap;
         }
+
+        .username-edit-input {
+            border: 1px solid #667eea;
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-size: 0.85em;
+            width: 90px;
+            outline: none;
+            margin-left: 2px;
+        }
+
+        .confirm-btn { color: #28a745; font-weight: bold; }
 
         #room-id-display {
             font-weight: bold;

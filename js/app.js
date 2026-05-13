@@ -45,6 +45,19 @@ class ComChat {
         this.copyRoomIdBtn = document.getElementById('copy-room-id');
         this.copyRoomIdBtn.addEventListener('click', () => this.copyRoomId());
 
+        this.usernameCurrentDisplay = document.getElementById('username-current');
+        this.editUsernameBtn = document.getElementById('edit-username-btn');
+        this.usernameEditInput = document.getElementById('username-edit-input');
+        this.usernameConfirmBtn = document.getElementById('username-confirm-btn');
+        this.editUsernameBtn.addEventListener('click', () => this.startEditUsername());
+        this.usernameConfirmBtn.addEventListener('click', () => this.confirmEditUsername());
+        this.usernameEditInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') this.confirmEditUsername();
+        });
+        this.usernameEditInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') this.exitUsernameEdit();
+        });
+
         this.createRoomBtn.addEventListener('click', () => this.createRoom());
         this.joinRoomBtn.addEventListener('click', () => this.showJoinInput());
         this.confirmJoinBtn.addEventListener('click', () => this.joinRoom());
@@ -262,6 +275,36 @@ class ComChat {
         this.roomInfoDiv.classList.remove('hidden');
         this.roomIdDisplay.textContent = this.roomId;
         this.participantCount.textContent = this.connections.size + 1;
+        this.usernameCurrentDisplay.textContent = this.username;
+    }
+
+    startEditUsername() {
+        this.usernameEditInput.value = this.username;
+        this.usernameCurrentDisplay.classList.add('hidden');
+        this.editUsernameBtn.classList.add('hidden');
+        this.usernameEditInput.classList.remove('hidden');
+        this.usernameConfirmBtn.classList.remove('hidden');
+        this.usernameEditInput.focus();
+        this.usernameEditInput.select();
+    }
+
+    confirmEditUsername() {
+        const newName = this.usernameEditInput.value.trim();
+        if (newName && newName !== this.username) {
+            this.username = newName;
+            const localLabel = document.querySelector('#video-local .video-label');
+            if (localLabel) localLabel.textContent = newName;
+            this.broadcast({ type: 'user-join', username: newName });
+        }
+        this.exitUsernameEdit();
+    }
+
+    exitUsernameEdit() {
+        this.usernameCurrentDisplay.textContent = this.username;
+        this.usernameCurrentDisplay.classList.remove('hidden');
+        this.editUsernameBtn.classList.remove('hidden');
+        this.usernameEditInput.classList.add('hidden');
+        this.usernameConfirmBtn.classList.add('hidden');
     }
 
     addVideoElement(id, stream, label) {
