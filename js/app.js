@@ -70,7 +70,15 @@ class ComChat {
         this.chatInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') this.sendMessage();
         });
-        this.hangupBtn.addEventListener('click', () => this.hangup());
+        this.hangupModal = document.getElementById('hangup-modal');
+        this.hangupConfirmBtn = document.getElementById('hangup-confirm');
+        this.hangupCancelBtn = document.getElementById('hangup-cancel');
+
+        this.hangupBtn.addEventListener('click', () => this.showHangupModal());
+        this.hangupConfirmBtn.addEventListener('click', () => { this.hideHangupModal(); this.hangup(); });
+        this.hangupCancelBtn.addEventListener('click', () => this.hideHangupModal());
+        this.hangupModal.addEventListener('click', (e) => { if (e.target === this.hangupModal) this.hideHangupModal(); });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.hideHangupModal(); });
         this.toggleVideoBtn.addEventListener('click', () => this.toggleVideo());
         this.toggleAudioBtn.addEventListener('click', () => this.toggleAudio());
         this.shareScreenBtn.addEventListener('click', () => this.shareScreen());
@@ -556,6 +564,14 @@ class ComChat {
         this.videoGrid.innerHTML = '';
         this.showWelcomeScreen();
         this.showStatus('通話を終了しました', 'connected');
+    }
+
+    showHangupModal() {
+        this.hangupModal.classList.remove('hidden');
+    }
+
+    hideHangupModal() {
+        this.hangupModal.classList.add('hidden');
     }
 
     showWelcomeScreen() {
