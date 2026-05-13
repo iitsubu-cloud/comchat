@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ComChat - 完全無料ビデオ会議</title>
-    <link rel="stylesheet" href="css/style.css?v=2">
+    <link rel="stylesheet" href="css/style.css?v=3">
     <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>">
 </head>
 <body>
@@ -68,18 +68,52 @@
 
                         <!-- Controls -->
                         <div class="controls">
-                            <button id="toggle-video" class="control-btn video" title="カメラ オン/オフ">
-                                📹
-                            </button>
-                            <button id="toggle-audio" class="control-btn audio" title="マイク オン/オフ">
-                                🎤
-                            </button>
-                            <button id="share-screen" class="control-btn screen" title="画面共有">
-                                🖥️
-                            </button>
-                            <button id="hangup" class="control-btn hangup" title="通話終了">
-                                📞
-                            </button>
+                            <div class="ctrl-item">
+                                <button id="toggle-video" class="control-btn video" title="カメラ オン/オフ">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <polygon points="23 7 16 12 23 17 23 7"/>
+                                        <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+                                    </svg>
+                                </button>
+                                <span class="ctrl-label">カメラ</span>
+                            </div>
+                            <div class="ctrl-item">
+                                <button id="toggle-audio" class="control-btn audio" title="マイク オン/オフ">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                                        <line x1="12" y1="19" x2="12" y2="23"/>
+                                        <line x1="8" y1="23" x2="16" y2="23"/>
+                                    </svg>
+                                </button>
+                                <span class="ctrl-label">マイク</span>
+                            </div>
+                            <div class="ctrl-item">
+                                <button id="share-screen" class="control-btn screen" title="画面共有">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                                        <polyline points="9 8 12 5 15 8"/>
+                                        <line x1="12" y1="5" x2="12" y2="13"/>
+                                        <line x1="8" y1="21" x2="16" y2="21"/>
+                                        <line x1="12" y1="17" x2="12" y2="21"/>
+                                    </svg>
+                                </button>
+                                <span class="ctrl-label">画面共有</span>
+                            </div>
+                            <div class="ctrl-item">
+                                <button id="hangup" class="control-btn hangup" title="退室">
+                                    <svg class="door-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <!-- ドア枠（固定） -->
+                                        <rect x="3" y="2" width="18" height="20" rx="1"/>
+                                        <!-- ドア葉＋取っ手（ホバーで回転） -->
+                                        <g class="door-leaf">
+                                            <rect x="4.5" y="3.5" width="15" height="17"/>
+                                            <circle cx="17" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+                                        </g>
+                                    </svg>
+                                </button>
+                                <span class="ctrl-label">退室</span>
+                            </div>
                         </div>
 
                         <!-- Room Info -->
@@ -254,9 +288,17 @@
             }
             
             .control-btn {
-                width: 45px;
-                height: 45px;
-                font-size: 1em;
+                width: 46px;
+                height: 46px;
+            }
+
+            .control-btn svg {
+                width: 22px;
+                height: 22px;
+            }
+
+            .ctrl-label {
+                font-size: 0.62em;
             }
         }
     </style>
