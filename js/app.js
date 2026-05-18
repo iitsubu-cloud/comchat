@@ -14,6 +14,12 @@ class ComChat {
         this.muteStates = new Map();
         this.receivingFiles = new Map();
         this.isConnecting = false;
+        this.bgFilterType = 'none';
+        this.bgFilterCanvas = null;
+        this.bgFilterCtx = null;
+        this.bgFilterStream = null;
+        this.bgFilterAnimId = null;
+        this.bgSourceVideo = null;
 
         this.initializeUI();
     }
@@ -89,6 +95,24 @@ class ComChat {
         this.fileInput = document.getElementById('file-input');
         this.fileAttachBtn = document.getElementById('file-attach-btn');
         this.isSendingFile = false;
+
+        this.bgFilterBtn = document.getElementById('bg-filter');
+        this.filterPanel = document.getElementById('filter-panel');
+        this.bgFilterBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isHidden = this.filterPanel.classList.contains('hidden');
+            if (!isHidden) { this.filterPanel.classList.add('hidden'); return; }
+            const rect = this.bgFilterBtn.getBoundingClientRect();
+            this.filterPanel.style.bottom = (window.innerHeight - rect.top + 10) + 'px';
+            this.filterPanel.style.left = (rect.left + rect.width / 2) + 'px';
+            this.filterPanel.classList.remove('hidden');
+        });
+        document.addEventListener('click', () => this.filterPanel.classList.add('hidden'));
+        this.filterPanel.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const option = e.target.closest('.filter-option');
+            if (option) { this.applyBgFilter(option.dataset.filter); this.filterPanel.classList.add('hidden'); }
+        });
         this.fileAttachBtn.addEventListener('click', () => {
             if (!this.isSendingFile) this.fileInput.click();
         });
@@ -289,6 +313,12 @@ class ComChat {
                 this.screenShareVideo.srcObject = remoteStream;
                 this.screenShareVideo.classList.remove('hidden');
                 this.screenSharePlaceholder.classList.add('hidden');
+            }
+            // 背景フィルターが有効なら新しいピアにもフィルタートラックを送る
+            if (this.bgFilterType !== 'none' && this.bgFilterStream && !this.currentScreenStream) {
+                const canvasTrack = this.bgFilterStream.getVideoTracks()[0];
+                const sender = call.peerConnection.getSenders().find(s => s.track?.kind === 'video');
+                if (sender && canvasTrack) sender.replaceTrack(canvasTrack).catch(() => {});
             }
         });
 
@@ -698,12 +728,15 @@ class ComChat {
 
         this.currentScreenStream.getTracks().forEach(t => t.stop());
 
-        // Restore remote peers to camera
+        // Restore remote peers to camera (or canvas if filter is active)
+        const restoreTrack = (this.bgFilterType !== 'none' && this.bgFilterStream)
+            ? this.bgFilterStream.getVideoTracks()[0]
+            : this.cameraVideoTrack;
         this.calls.forEach((call) => {
             const sender = call.peerConnection.getSenders().find(s =>
                 s.track && s.track.kind === 'video'
             );
-            if (sender && this.cameraVideoTrack) sender.replaceTrack(this.cameraVideoTrack);
+            if (sender && restoreTrack) sender.replaceTrack(restoreTrack).catch(() => {});
         });
 
         // Restore grid layout
@@ -718,6 +751,108 @@ class ComChat {
         this.shareScreenBtn.classList.remove('active');
         this.broadcast({ type: 'screen-share-stop' });
         this.cameraVideoTrack = null;
+    }
+
+    getCSSFilter(type) {
+        const map = { blur: 'blur(8px)', grayscale: 'grayscale(100%)', sepia: 'sepia(100%)', brightness: 'brightness(1.5)' };
+        return map[type] || 'none';
+    }
+
+    startBgFilterLoop() {
+        const cssFilter = this.getCSSFilter(this.bgFilterType);
+        const draw = () => {
+            if (this.bgFilterType === 'none' || !this.bgSourceVideo || !this.bgFilterCtx) return;
+            this.bgFilterCtx.filter = cssFilter;
+            this.bgFilterCtx.drawImage(this.bgSourceVideo, 0, 0, this.bgFilterCanvas.width, this.bgFilterCanvas.height);
+            this.bgFilterAnimId = requestAnimationFrame(draw);
+        };
+        this.bgFilterAnimId = requestAnimationFrame(draw);
+    }
+
+    stopBgFilterLoop() {
+        if (this.bgFilterAnimId != null) {
+            cancelAnimationFrame(this.bgFilterAnimId);
+            this.bgFilterAnimId = null;
+        }
+    }
+
+    cleanupBgFilterResources() {
+        if (this.bgSourceVideo) {
+            this.bgSourceVideo.srcObject = null;
+            this.bgSourceVideo.remove();
+            this.bgSourceVideo = null;
+        }
+        this.bgFilterCanvas = null;
+        this.bgFilterCtx = null;
+        this.bgFilterStream = null;
+    }
+
+    async applyBgFilter(type) {
+        this.bgFilterType = type;
+
+        this.filterPanel.querySelectorAll('.filter-option').forEach(el => {
+            el.classList.toggle('active', el.dataset.filter === type);
+        });
+
+        const localVideoEl = document.querySelector('#video-local .video-element');
+
+        if (type === 'none') {
+            this.stopBgFilterLoop();
+            this.cleanupBgFilterResources();
+            if (localVideoEl && this.localStream) localVideoEl.srcObject = this.localStream;
+            if (!this.currentScreenStream) {
+                const origTrack = this.localStream?.getVideoTracks()[0];
+                if (origTrack) {
+                    this.calls.forEach(call => {
+                        const sender = call.peerConnection.getSenders().find(s => s.track?.kind === 'video');
+                        if (sender) sender.replaceTrack(origTrack).catch(() => {});
+                    });
+                }
+            }
+            this.bgFilterBtn.classList.remove('active');
+            return;
+        }
+
+        try {
+            if (!this.bgFilterCanvas) {
+                this.bgFilterCanvas = document.createElement('canvas');
+                const track = this.localStream?.getVideoTracks()[0];
+                const settings = track?.getSettings() || {};
+                this.bgFilterCanvas.width = settings.width || 640;
+                this.bgFilterCanvas.height = settings.height || 360;
+                this.bgFilterCtx = this.bgFilterCanvas.getContext('2d');
+                this.bgFilterStream = this.bgFilterCanvas.captureStream(30);
+            }
+
+            if (!this.bgSourceVideo) {
+                this.bgSourceVideo = document.createElement('video');
+                this.bgSourceVideo.muted = true;
+                this.bgSourceVideo.autoplay = true;
+                this.bgSourceVideo.playsInline = true;
+                this.bgSourceVideo.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:640px;height:360px;pointer-events:none;';
+                this.bgSourceVideo.srcObject = this.localStream;
+                document.body.appendChild(this.bgSourceVideo);
+                await this.bgSourceVideo.play().catch(() => {});
+            }
+
+            this.stopBgFilterLoop();
+            this.startBgFilterLoop();
+
+            if (localVideoEl) localVideoEl.srcObject = this.bgFilterStream;
+
+            if (!this.currentScreenStream) {
+                const canvasTrack = this.bgFilterStream.getVideoTracks()[0];
+                this.calls.forEach(call => {
+                    const sender = call.peerConnection.getSenders().find(s => s.track?.kind === 'video');
+                    if (sender && canvasTrack) sender.replaceTrack(canvasTrack).catch(() => {});
+                });
+            }
+            this.bgFilterBtn.classList.add('active');
+        } catch (err) {
+            console.error('Filter error:', err);
+            this.bgFilterType = 'none';
+            this.showStatus('このブラウザでは背景フィルターを利用できません', 'error');
+        }
     }
 
     hangup() {
@@ -751,10 +886,15 @@ class ComChat {
         this.cameraVideoTrack = null;
         this.isConnecting = false;
 
+        this.stopBgFilterLoop();
+        this.cleanupBgFilterResources();
+        this.bgFilterType = 'none';
+
         // ボタンの視覚状態をリセット（再入室時に前の状態が残らないように）
         this.toggleVideoBtn.classList.remove('off');
         this.toggleAudioBtn.classList.remove('off');
         this.shareScreenBtn.classList.remove('active');
+        this.bgFilterBtn.classList.remove('active');
         this.createRoomBtn.disabled = false;
         this.joinRoomBtn.disabled = false;
         this.confirmJoinBtn.disabled = false;

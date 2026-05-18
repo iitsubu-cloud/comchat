@@ -521,6 +521,16 @@ body {
     box-shadow: 0 0 0 3px rgba(255, 193, 7, 0.45);
 }
 
+.control-btn.filter {
+    background: #9b59b6;
+    color: white;
+}
+
+.control-btn.filter.active {
+    background: #6c3483;
+    box-shadow: 0 0 0 3px rgba(155, 89, 182, 0.45);
+}
+
 .control-btn.hangup {
     background: #dc3545;
     color: white;
@@ -613,6 +623,44 @@ body {
 @keyframes toastOut {
     from { opacity: 1; }
     to   { opacity: 0; }
+}
+
+/* 背景フィルターパネル */
+.filter-panel {
+    position: fixed;
+    background: white;
+    border-radius: 12px;
+    padding: 6px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    z-index: 9000;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 110px;
+    transform: translateX(-50%);
+}
+
+.filter-option {
+    padding: 8px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.88em;
+    font-weight: 500;
+    color: #444;
+    transition: background 0.15s;
+    white-space: nowrap;
+    text-align: center;
+    user-select: none;
+}
+
+.filter-option:hover {
+    background: #f0f2ff;
+    color: #667eea;
+}
+
+.filter-option.active {
+    background: #9b59b6;
+    color: white;
 }
 
 /* Responsive design */
