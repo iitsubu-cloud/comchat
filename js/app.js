@@ -19,7 +19,6 @@ class ComChat {
         this.bgFilterCtx = null;
         this.bgFilterStream = null;
         this.bgFilterAnimId = null;
-        this.bgSourceVideo = null;
 
         this.initializeUI();
     }
@@ -760,10 +759,19 @@ class ComChat {
 
     startBgFilterLoop() {
         const cssFilter = this.getCSSFilter(this.bgFilterType);
+        let src = document.querySelector('#video-local .video-element');
         const draw = () => {
-            if (this.bgFilterType === 'none' || !this.bgSourceVideo || !this.bgFilterCtx) return;
-            this.bgFilterCtx.filter = cssFilter;
-            this.bgFilterCtx.drawImage(this.bgSourceVideo, 0, 0, this.bgFilterCanvas.width, this.bgFilterCanvas.height);
+            if (this.bgFilterType === 'none') return;
+            // Re-query if the element was replaced
+            if (!src || !src.isConnected) src = document.querySelector('#video-local .video-element');
+            if (src && src.readyState >= 2 && this.bgFilterCtx) {
+                if (src.videoWidth > 0 && this.bgFilterCanvas.width !== src.videoWidth) {
+                    this.bgFilterCanvas.width = src.videoWidth;
+                    this.bgFilterCanvas.height = src.videoHeight;
+                }
+                this.bgFilterCtx.filter = cssFilter;
+                this.bgFilterCtx.drawImage(src, 0, 0, this.bgFilterCanvas.width, this.bgFilterCanvas.height);
+            }
             this.bgFilterAnimId = requestAnimationFrame(draw);
         };
         this.bgFilterAnimId = requestAnimationFrame(draw);
@@ -777,17 +785,12 @@ class ComChat {
     }
 
     cleanupBgFilterResources() {
-        if (this.bgSourceVideo) {
-            this.bgSourceVideo.srcObject = null;
-            this.bgSourceVideo.remove();
-            this.bgSourceVideo = null;
-        }
         this.bgFilterCanvas = null;
         this.bgFilterCtx = null;
         this.bgFilterStream = null;
     }
 
-    async applyBgFilter(type) {
+    applyBgFilter(type) {
         this.bgFilterType = type;
 
         this.filterPanel.querySelectorAll('.filter-option').forEach(el => {
@@ -799,7 +802,9 @@ class ComChat {
         if (type === 'none') {
             this.stopBgFilterLoop();
             this.cleanupBgFilterResources();
-            if (localVideoEl && this.localStream) localVideoEl.srcObject = this.localStream;
+            // Remove CSS filter from local display
+            if (localVideoEl) localVideoEl.style.filter = '';
+            // Restore remote peers to raw camera track
             if (!this.currentScreenStream) {
                 const origTrack = this.localStream?.getVideoTracks()[0];
                 if (origTrack) {
@@ -816,29 +821,19 @@ class ComChat {
         try {
             if (!this.bgFilterCanvas) {
                 this.bgFilterCanvas = document.createElement('canvas');
-                const track = this.localStream?.getVideoTracks()[0];
-                const settings = track?.getSettings() || {};
-                this.bgFilterCanvas.width = settings.width || 640;
-                this.bgFilterCanvas.height = settings.height || 360;
+                this.bgFilterCanvas.width = localVideoEl?.videoWidth || 640;
+                this.bgFilterCanvas.height = localVideoEl?.videoHeight || 360;
                 this.bgFilterCtx = this.bgFilterCanvas.getContext('2d');
                 this.bgFilterStream = this.bgFilterCanvas.captureStream(30);
             }
 
-            if (!this.bgSourceVideo) {
-                this.bgSourceVideo = document.createElement('video');
-                this.bgSourceVideo.muted = true;
-                this.bgSourceVideo.autoplay = true;
-                this.bgSourceVideo.playsInline = true;
-                this.bgSourceVideo.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:640px;height:360px;pointer-events:none;';
-                this.bgSourceVideo.srcObject = this.localStream;
-                document.body.appendChild(this.bgSourceVideo);
-                await this.bgSourceVideo.play().catch(() => {});
-            }
+            // Apply CSS filter to local video element for the local user's view.
+            // The draw loop draws from this same element to the canvas so remote
+            // peers receive the filtered frames via captureStream.
+            if (localVideoEl) localVideoEl.style.filter = this.getCSSFilter(type);
 
             this.stopBgFilterLoop();
             this.startBgFilterLoop();
-
-            if (localVideoEl) localVideoEl.srcObject = this.bgFilterStream;
 
             if (!this.currentScreenStream) {
                 const canvasTrack = this.bgFilterStream.getVideoTracks()[0];
