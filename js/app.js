@@ -764,9 +764,8 @@ class ComChat {
         await new Promise((resolve, reject) => {
             const s = document.createElement('script');
             s.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js';
-            s.crossOrigin = 'anonymous';
-            s.onload = resolve;
-            s.onerror = () => reject(new Error('MediaPipe の読み込みに失敗しました'));
+            s.onload = () => window.SelfieSegmentation ? resolve() : reject(new Error('SelfieSegmentation not defined'));
+            s.onerror = () => reject(new Error('スクリプト読み込み失敗'));
             document.head.appendChild(s);
         });
     }
@@ -779,7 +778,10 @@ class ComChat {
         });
         this.selfieSegmentation.setOptions({ modelSelection: 1 });
         this.selfieSegmentation.onResults((r) => this.onSegmentationResults(r));
-        await this.selfieSegmentation.initialize();
+        await Promise.race([
+            this.selfieSegmentation.initialize(),
+            new Promise((_, r) => setTimeout(() => r(new Error('MediaPipe timeout')), 12000))
+        ]);
     }
 
     onSegmentationResults(results) {
@@ -787,22 +789,18 @@ class ComChat {
         const ctx = this.bgFilterCtx;
         const w = this.bgFilterCanvas.width;
         const h = this.bgFilterCanvas.height;
-
-        // Step 1: mask をコピー（白=人物, 透明=背景）
+        // マスクをコピー（白=人物 → alpha で表現される）
         ctx.globalCompositeOperation = 'copy';
         ctx.drawImage(results.segmentationMask, 0, 0, w, h);
-
-        // Step 2: 人物エリアだけ元映像を描画（背景は透明のまま）
+        // 人物エリアだけ元映像を残す
         ctx.globalCompositeOperation = 'source-in';
         ctx.filter = 'none';
         ctx.drawImage(results.image, 0, 0, w, h);
-
-        // Step 3: フィルター済み背景を人物の後ろに描画
+        // フィルター済み背景を人物の後ろに合成
         ctx.globalCompositeOperation = 'destination-over';
         ctx.filter = this.getCSSFilter(this.bgFilterType);
         ctx.drawImage(results.image, 0, 0, w, h);
         ctx.filter = 'none';
-
         ctx.globalCompositeOperation = 'source-over';
     }
 
@@ -817,6 +815,25 @@ class ComChat {
         this.bgFilterAnimId = requestAnimationFrame(loop);
     }
 
+    startCSSFilterLoop() {
+        const draw = () => {
+            if (this.bgFilterType === 'none' || !this.bgSourceVideo || !this.bgFilterCtx) return;
+            if (this.bgSourceVideo.readyState >= 2) {
+                const vw = this.bgSourceVideo.videoWidth;
+                const vh = this.bgSourceVideo.videoHeight;
+                if (vw > 0 && this.bgFilterCanvas.width !== vw) {
+                    this.bgFilterCanvas.width = vw;
+                    this.bgFilterCanvas.height = vh;
+                }
+                this.bgFilterCtx.filter = this.getCSSFilter(this.bgFilterType);
+                this.bgFilterCtx.drawImage(this.bgSourceVideo, 0, 0, this.bgFilterCanvas.width, this.bgFilterCanvas.height);
+                this.bgFilterCtx.filter = 'none';
+            }
+            this.bgFilterAnimId = requestAnimationFrame(draw);
+        };
+        this.bgFilterAnimId = requestAnimationFrame(draw);
+    }
+
     stopBgFilterLoop() {
         if (this.bgFilterAnimId != null) {
             cancelAnimationFrame(this.bgFilterAnimId);
@@ -827,7 +844,10 @@ class ComChat {
     cleanupBgFilterResources() {
         if (this.bgSourceVideo) {
             this.bgSourceVideo.srcObject = null;
-            this.bgSourceVideo.remove();
+            // bgSourceVideo は専用コンテナ内に入れているのでコンテナごと削除
+            const container = this.bgSourceVideo.parentElement;
+            if (container && container !== document.body) container.remove();
+            else this.bgSourceVideo.remove();
             this.bgSourceVideo = null;
         }
         if (this.selfieSegmentation) {
@@ -870,42 +890,60 @@ class ComChat {
         }
 
         if (wasActive) {
-            // フィルター種類だけ変更 — onSegmentationResults が新しい getCSSFilter を使う
+            // フィルター種類だけ変更 — 両ループが getCSSFilter を動的に参照
             return;
         }
 
-        // 初回起動: MediaPipe 初期化 + パイプライン構築
+        // 初回起動: 共通インフラを先に確立し、MediaPipe を試みる
         try {
-            this.showStatus('背景フィルターを読み込み中...', 'connecting');
-            await this.initSelfieSegmentation();
-
+            // 1. ソース動画（生カメラ）を隠しコンテナ内で再生
+            const bgContainer = document.createElement('div');
+            bgContainer.style.cssText = 'position:fixed;width:0;height:0;overflow:hidden;pointer-events:none;';
+            document.body.appendChild(bgContainer);
             this.bgSourceVideo = document.createElement('video');
+            this.bgSourceVideo.style.cssText = 'width:640px;height:360px;';
             this.bgSourceVideo.muted = true;
             this.bgSourceVideo.autoplay = true;
             this.bgSourceVideo.playsInline = true;
-            // visibility:hidden でレンダリングを維持しつつ非表示
-            this.bgSourceVideo.style.cssText = 'visibility:hidden;position:fixed;left:0;top:0;width:320px;height:180px;pointer-events:none;';
             this.bgSourceVideo.srcObject = this.localStream;
-            document.body.appendChild(this.bgSourceVideo);
+            bgContainer.appendChild(this.bgSourceVideo);
             await this.bgSourceVideo.play().catch(() => {});
             if (this.bgSourceVideo.readyState < 2) {
-                await new Promise(r => this.bgSourceVideo.addEventListener('loadeddata', r, { once: true }));
+                await new Promise(r => {
+                    this.bgSourceVideo.addEventListener('loadeddata', r, { once: true });
+                    setTimeout(r, 3000); // 3秒タイムアウト
+                });
             }
 
+            // 2. 出力 Canvas とキャプチャストリームを作成
             this.bgFilterCanvas = document.createElement('canvas');
             this.bgFilterCanvas.width = this.bgSourceVideo.videoWidth || 640;
             this.bgFilterCanvas.height = this.bgSourceVideo.videoHeight || 360;
             this.bgFilterCtx = this.bgFilterCanvas.getContext('2d');
             this.bgFilterStream = this.bgFilterCanvas.captureStream(30);
 
-            // ローカル表示を Canvas ストリームに切り替え
+            // 3. ローカル表示を Canvas ストリームに切り替え
             if (localVideoEl) {
                 localVideoEl.srcObject = this.bgFilterStream;
                 localVideoEl.style.filter = '';
             }
 
-            this.startBgFilterLoop();
+            // 4. MediaPipe を試みる。失敗時は CSS フィルターループで代替
+            let usedMediaPipe = false;
+            try {
+                this.showStatus('背景フィルターを読み込み中...', 'connecting');
+                await this.initSelfieSegmentation();
+                this.startBgFilterLoop();
+                usedMediaPipe = true;
+            } catch (mpErr) {
+                console.warn('MediaPipe unavailable, falling back to CSS filter:', mpErr);
+                if (this.selfieSegmentation) { this.selfieSegmentation.close(); this.selfieSegmentation = null; }
+                this.startCSSFilterLoop();
+                this.showStatus('背景フィルター（全体）を適用中', 'connected');
+            }
+            if (usedMediaPipe) this.showStatus('背景フィルターを適用しました', 'connected');
 
+            // 5. リモートピアにも Canvas トラックを送信
             if (!this.currentScreenStream) {
                 const canvasTrack = this.bgFilterStream.getVideoTracks()[0];
                 this.calls.forEach(call => {
@@ -915,11 +953,18 @@ class ComChat {
             }
             this.bgFilterBtn.classList.add('active');
         } catch (err) {
-            console.error('Filter init error:', err);
+            console.error('Filter setup error:', err);
+            this.stopBgFilterLoop();
+            this.cleanupBgFilterResources();
             this.bgFilterType = 'none';
             this.filterPanel.querySelectorAll('.filter-option').forEach(el => {
                 el.classList.toggle('active', el.dataset.filter === 'none');
             });
+            if (localVideoEl && this.localStream) {
+                localVideoEl.srcObject = this.localStream;
+                localVideoEl.style.filter = '';
+            }
+            this.bgFilterBtn.classList.remove('active');
             this.showStatus('背景フィルターを利用できません', 'error');
         }
     }
