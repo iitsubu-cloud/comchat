@@ -12,6 +12,7 @@ class ComChat {
         this.username = 'ユーザー';
         this.isAudioMuted = false;
         this.muteStates = new Map();
+        this.receivingFiles = new Map();
         this.isConnecting = false;
 
         this.initializeUI();
@@ -84,6 +85,14 @@ class ComChat {
         this.toggleAudioBtn.addEventListener('click', () => this.toggleAudio());
         this.shareScreenBtn.addEventListener('click', () => this.shareScreen());
         this.stopShareBtn.addEventListener('click', () => this.stopScreenShare());
+
+        this.fileInput = document.getElementById('file-input');
+        this.fileAttachBtn = document.getElementById('file-attach-btn');
+        this.fileAttachBtn.addEventListener('click', () => this.fileInput.click());
+        this.fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) { this.sendFile(file); e.target.value = ''; }
+        });
     }
 
     showJoinInput() {
@@ -322,6 +331,33 @@ class ComChat {
             case 'screen-share-stop':
                 this.exitRemotePresenterMode();
                 break;
+            case 'file-meta':
+                this.receivingFiles.set(data.id, { meta: data, chunks: [] });
+                break;
+            case 'file-chunk':
+                if (this.receivingFiles.has(data.id)) {
+                    this.receivingFiles.get(data.id).chunks[data.index] = data.data;
+                }
+                break;
+            case 'file-done': {
+                const transfer = this.receivingFiles.get(data.id);
+                if (!transfer) break;
+                this.receivingFiles.delete(data.id);
+                const { meta, chunks } = transfer;
+                const buffers = [];
+                for (let i = 0; i < meta.totalChunks; i++) {
+                    if (!chunks[i]) continue;
+                    const bin = atob(chunks[i]);
+                    const buf = new Uint8Array(bin.length);
+                    for (let j = 0; j < bin.length; j++) buf[j] = bin.charCodeAt(j);
+                    buffers.push(buf);
+                }
+                const blob = new Blob(buffers, { type: meta.mimeType || 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
+                const senderName = this.usernames.get(senderId) || senderId;
+                this.displayFileMessage(senderName, meta.name, meta.size, url);
+                break;
+            }
         }
     }
 
@@ -424,6 +460,67 @@ class ComChat {
         messageDiv.appendChild(span);
         this.chatMessages.appendChild(messageDiv);
         this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+    }
+
+    async sendFile(file) {
+        const MAX = 20 * 1024 * 1024;
+        if (file.size > MAX) {
+            this.showStatus('ファイルサイズは20MB以下にしてください', 'error');
+            return;
+        }
+        const fileId = Math.random().toString(36).slice(2, 11);
+        const CHUNK = 64 * 1024;
+        try {
+            const buffer = await file.arrayBuffer();
+            const totalChunks = Math.ceil(buffer.byteLength / CHUNK) || 1;
+            this.broadcast({ type: 'file-meta', id: fileId, name: file.name, size: file.size, mimeType: file.type, totalChunks });
+            for (let i = 0; i < totalChunks; i++) {
+                const slice = new Uint8Array(buffer, i * CHUNK, Math.min(CHUNK, buffer.byteLength - i * CHUNK));
+                let bin = '';
+                for (let j = 0; j < slice.length; j++) bin += String.fromCharCode(slice[j]);
+                this.broadcast({ type: 'file-chunk', id: fileId, index: i, data: btoa(bin) });
+            }
+            this.broadcast({ type: 'file-done', id: fileId });
+            const url = URL.createObjectURL(file);
+            this.displayFileMessage(this.username, file.name, file.size, url);
+        } catch (err) {
+            console.error('File send error:', err);
+            this.showStatus('ファイルの送信に失敗しました', 'error');
+        }
+    }
+
+    displayFileMessage(username, filename, filesize, url) {
+        const msgDiv = document.createElement('div');
+        msgDiv.className = 'chat-file-msg';
+
+        const nameEl = document.createElement('strong');
+        nameEl.textContent = username + ':';
+
+        const fileDiv = document.createElement('div');
+        fileDiv.className = 'file-info';
+
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        link.textContent = filename;
+        link.className = 'file-link';
+
+        const sizeEl = document.createElement('span');
+        sizeEl.className = 'file-size';
+        sizeEl.textContent = this.formatFileSize(filesize);
+
+        fileDiv.appendChild(link);
+        fileDiv.appendChild(sizeEl);
+        msgDiv.appendChild(nameEl);
+        msgDiv.appendChild(fileDiv);
+        this.chatMessages.appendChild(msgDiv);
+        this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+    }
+
+    formatFileSize(bytes) {
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     }
 
     broadcast(data) {
@@ -591,6 +688,7 @@ class ComChat {
         this.roomId = null;
         this.isAudioMuted = false;
         this.muteStates.clear();
+        this.receivingFiles.clear();
         this.currentRemoteSharerId = null;
         this.currentScreenStream = null;
         this.cameraVideoTrack = null;
