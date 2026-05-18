@@ -844,10 +844,7 @@ class ComChat {
     cleanupBgFilterResources() {
         if (this.bgSourceVideo) {
             this.bgSourceVideo.srcObject = null;
-            // bgSourceVideo は専用コンテナ内に入れているのでコンテナごと削除
-            const container = this.bgSourceVideo.parentElement;
-            if (container && container !== document.body) container.remove();
-            else this.bgSourceVideo.remove();
+            this.bgSourceVideo.remove();
             this.bgSourceVideo = null;
         }
         if (this.selfieSegmentation) {
@@ -906,32 +903,40 @@ class ComChat {
         this.bgFilterBtn.classList.add('active');
 
         try {
-            // 1. bgSourceVideo を 1px の visible コンテナで再生
-            //    width:0/height:0 だと Safari がビデオデコードをスロットリングするため
-            //    1px の表示領域を確保してスロットリングを防止する
-            const bgContainer = document.createElement('div');
-            bgContainer.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;overflow:hidden;opacity:0.001;pointer-events:none;z-index:-1;';
-            document.body.appendChild(bgContainer);
+            // 1. bgSourceVideo を body に 2px×2px で直接追加
+            //    コンテナの overflow:hidden や opacity:0 だと Safari がデコードをスロットリングする。
+            //    実際にレンダリングされる最小サイズ（2px×2px, z-index:-9999）を確保してスロットリングを防ぐ。
             this.bgSourceVideo = document.createElement('video');
-            this.bgSourceVideo.style.cssText = 'width:640px;height:360px;';
+            this.bgSourceVideo.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;pointer-events:none;z-index:-9999;opacity:0.01;object-fit:cover;';
             this.bgSourceVideo.muted = true;
             this.bgSourceVideo.autoplay = true;
             this.bgSourceVideo.playsInline = true;
             this.bgSourceVideo.srcObject = this.localStream;
-            bgContainer.appendChild(this.bgSourceVideo);
+            document.body.appendChild(this.bgSourceVideo);
             await this.bgSourceVideo.play().catch(() => {});
             if (this.bgSourceVideo.readyState < 2) {
                 await new Promise(r => {
                     this.bgSourceVideo.addEventListener('loadeddata', r, { once: true });
-                    setTimeout(r, 3000);
+                    setTimeout(r, 5000);
                 });
+            }
+
+            // videoWidth = 0 はフレームが来ていない（Safari スロットリングなど）
+            // Canvas パイプラインを諦めて CSS-only モードにフォールバック
+            const srcW = this.bgSourceVideo.videoWidth;
+            const srcH = this.bgSourceVideo.videoHeight;
+            if (srcW === 0) {
+                this.cleanupBgFilterResources();
+                if (localVideoEl) localVideoEl.style.filter = this.getCSSFilter(type);
+                this.showStatus('フィルターを適用しました', 'connected');
+                return;
             }
 
             // 2. Canvas 作成と ctx.filter サポートチェック
             //    ctx.filter は Safari 17以前で未対応（Safari 18.0 で追加）
             this.bgFilterCanvas = document.createElement('canvas');
-            this.bgFilterCanvas.width = this.bgSourceVideo.videoWidth || 640;
-            this.bgFilterCanvas.height = this.bgSourceVideo.videoHeight || 360;
+            this.bgFilterCanvas.width = srcW;
+            this.bgFilterCanvas.height = srcH;
             this.bgFilterCtx = this.bgFilterCanvas.getContext('2d');
 
             if (!('filter' in this.bgFilterCtx)) {
