@@ -921,16 +921,30 @@ class ComChat {
                 });
             }
 
-            // videoWidth = 0 はフレームが来ていない（Safari スロットリングなど）
-            // Canvas パイプラインを諦めて CSS-only モードにフォールバック
-            const srcW = this.bgSourceVideo.videoWidth;
-            const srcH = this.bgSourceVideo.videoHeight;
-            if (srcW === 0) {
+            // requestVideoFrameCallback でフレームが実際に届いているか確認
+            // videoWidth > 0 だけでは Safari スロットリング時のフレーム未生成を検知できない
+            const frameAvailable = await new Promise(resolve => {
+                if (typeof this.bgSourceVideo.requestVideoFrameCallback === 'function') {
+                    // 2 秒以内に最初のフレームが届いたら true、届かなければ false
+                    this.bgSourceVideo.requestVideoFrameCallback(() => resolve(true));
+                    setTimeout(() => resolve(false), 2000);
+                } else {
+                    // API 非対応ブラウザは videoWidth で代替
+                    resolve(this.bgSourceVideo.videoWidth > 0);
+                }
+            });
+
+            if (!frameAvailable) {
+                // フレームなし（スロットリング等）→ CSS-only モードにフォールバック
+                // Canvas に黒フレームを送信しないためリソースを解放
                 this.cleanupBgFilterResources();
                 if (localVideoEl) localVideoEl.style.filter = this.getCSSFilter(type);
                 this.showStatus('フィルターを適用しました', 'connected');
                 return;
             }
+
+            const srcW = this.bgSourceVideo.videoWidth;
+            const srcH = this.bgSourceVideo.videoHeight;
 
             // 2. Canvas 作成と ctx.filter サポートチェック
             //    ctx.filter は Safari 17以前で未対応（Safari 18.0 で追加）
