@@ -88,7 +88,10 @@ class ComChat {
 
         this.fileInput = document.getElementById('file-input');
         this.fileAttachBtn = document.getElementById('file-attach-btn');
-        this.fileAttachBtn.addEventListener('click', () => this.fileInput.click());
+        this.isSendingFile = false;
+        this.fileAttachBtn.addEventListener('click', () => {
+            if (!this.isSendingFile) this.fileInput.click();
+        });
         this.fileInput.addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (file) { this.sendFile(file); e.target.value = ''; }
@@ -205,7 +208,7 @@ class ComChat {
                 video: true,
                 audio: true
             });
-            this.addVideoElement('local', this.localStream, 'あなた');
+            this.addVideoElement('local', this.localStream, this.username);
         } catch (error) {
             throw new Error('カメラ/マイクへのアクセスが拒否されました');
         }
@@ -476,6 +479,8 @@ class ComChat {
         const fileId = Math.random().toString(36).slice(2, 11);
         const CHUNK = 64 * 1024;
         const BUFFER_HIGH = 512 * 1024;
+        this.isSendingFile = true;
+        this.fileAttachBtn.disabled = true;
         const progress = this.createFileProgress(this.username, file.name, '送信中');
         try {
             const buffer = await file.arrayBuffer();
@@ -497,6 +502,9 @@ class ComChat {
             progress.statusEl.textContent = '送信失敗';
             progress.barInner.style.background = '#dc3545';
             this.showStatus('ファイルの送信に失敗しました', 'error');
+        } finally {
+            this.isSendingFile = false;
+            this.fileAttachBtn.disabled = false;
         }
     }
 
@@ -752,6 +760,9 @@ class ComChat {
         this.confirmJoinBtn.disabled = false;
 
         this.videoGrid.innerHTML = '';
+        this.chatMessages.innerHTML = '';
+        this.isSendingFile = false;
+        this.fileAttachBtn.disabled = false;
         this.showWelcomeScreen();
         this.showStatus('退室しました', 'connected');
     }

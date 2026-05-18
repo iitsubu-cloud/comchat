@@ -166,7 +166,7 @@
 
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
-    <script src="js/app.js?v=11"></script>
+    <script src="js/app.js?v=12"></script>
 
     <script>
         // タブを閉じる/ページ遷移時にリソースだけ解放（UI操作は不要）
@@ -183,8 +183,8 @@
         // Error handling
         window.addEventListener('error', (e) => {
             console.error('Global error:', e.error);
-            if (window.comChat) {
-                window.comChat.showStatus('エラーが発生しました: ' + e.error.message, 'error');
+            if (window.comChat && e.error) {
+                window.comChat.showStatus('エラーが発生しました: ' + (e.error.message || 'Unknown error'), 'error');
             }
         });
     </script>
