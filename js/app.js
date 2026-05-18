@@ -872,9 +872,12 @@ class ComChat {
         if (type === 'none') {
             this.stopBgFilterLoop();
             this.cleanupBgFilterResources();
-            if (localVideoEl && this.localStream) {
-                localVideoEl.srcObject = this.localStream;
+            if (localVideoEl) {
                 localVideoEl.style.filter = '';
+                if (this.localStream) {
+                    localVideoEl.srcObject = this.localStream;
+                    localVideoEl.play().catch(() => {});
+                }
             }
             if (!this.currentScreenStream) {
                 const origTrack = this.localStream?.getVideoTracks()[0];
@@ -890,15 +893,24 @@ class ComChat {
         }
 
         if (wasActive) {
-            // フィルター種類だけ変更 — 両ループが getCSSFilter を動的に参照
+            // フィルター種類だけ変更
+            if (localVideoEl && !this.bgFilterStream) {
+                // CSS-only モード（Safari 17以前など ctx.filter 未対応環境）
+                localVideoEl.style.filter = this.getCSSFilter(type);
+            }
+            // Canvas モード: ループが getCSSFilter を動的参照するため操作不要
             return;
         }
 
-        // 初回起動: 共通インフラを先に確立し、MediaPipe を試みる
+        // 初回起動
+        this.bgFilterBtn.classList.add('active');
+
         try {
-            // 1. ソース動画（生カメラ）を隠しコンテナ内で再生
+            // 1. bgSourceVideo を 1px の visible コンテナで再生
+            //    width:0/height:0 だと Safari がビデオデコードをスロットリングするため
+            //    1px の表示領域を確保してスロットリングを防止する
             const bgContainer = document.createElement('div');
-            bgContainer.style.cssText = 'position:fixed;width:0;height:0;overflow:hidden;pointer-events:none;';
+            bgContainer.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;overflow:hidden;opacity:0.001;pointer-events:none;z-index:-1;';
             document.body.appendChild(bgContainer);
             this.bgSourceVideo = document.createElement('video');
             this.bgSourceVideo.style.cssText = 'width:640px;height:360px;';
@@ -911,22 +923,28 @@ class ComChat {
             if (this.bgSourceVideo.readyState < 2) {
                 await new Promise(r => {
                     this.bgSourceVideo.addEventListener('loadeddata', r, { once: true });
-                    setTimeout(r, 3000); // 3秒タイムアウト
+                    setTimeout(r, 3000);
                 });
             }
 
-            // 2. 出力 Canvas とキャプチャストリームを作成
+            // 2. Canvas 作成と ctx.filter サポートチェック
+            //    ctx.filter は Safari 17以前で未対応（Safari 18.0 で追加）
             this.bgFilterCanvas = document.createElement('canvas');
             this.bgFilterCanvas.width = this.bgSourceVideo.videoWidth || 640;
             this.bgFilterCanvas.height = this.bgSourceVideo.videoHeight || 360;
             this.bgFilterCtx = this.bgFilterCanvas.getContext('2d');
-            this.bgFilterStream = this.bgFilterCanvas.captureStream(30);
 
-            // 3. ローカル表示を Canvas ストリームに切り替え
-            if (localVideoEl) {
-                localVideoEl.srcObject = this.bgFilterStream;
-                localVideoEl.style.filter = '';
+            if (!('filter' in this.bgFilterCtx)) {
+                // Canvas フィルター未対応: CSS filter をローカル表示に直接適用
+                this.cleanupBgFilterResources();
+                if (localVideoEl) localVideoEl.style.filter = this.getCSSFilter(type);
+                this.showStatus('フィルターを適用しました', 'connected');
+                return;
             }
+
+            // 3. captureStream で Canvas トラックを取得
+            this.bgFilterStream = this.bgFilterCanvas.captureStream(30);
+            if (!this.bgFilterStream.getVideoTracks().length) throw new Error('captureStream no tracks');
 
             // 4. MediaPipe を試みる。失敗時は CSS フィルターループで代替
             let usedMediaPipe = false;
@@ -939,11 +957,17 @@ class ComChat {
                 console.warn('MediaPipe unavailable, falling back to CSS filter:', mpErr);
                 if (this.selfieSegmentation) { this.selfieSegmentation.close(); this.selfieSegmentation = null; }
                 this.startCSSFilterLoop();
-                this.showStatus('背景フィルター（全体）を適用中', 'connected');
             }
-            if (usedMediaPipe) this.showStatus('背景フィルターを適用しました', 'connected');
 
-            // 5. リモートピアにも Canvas トラックを送信
+            // 5. ローカル表示を Canvas ストリームに切り替え
+            //    Safari は srcObject 変更後に明示的な play() が必要
+            if (localVideoEl) {
+                localVideoEl.srcObject = this.bgFilterStream;
+                localVideoEl.style.filter = '';
+                localVideoEl.play().catch(() => {});
+            }
+
+            // 6. リモートピアにも Canvas トラックを送信
             if (!this.currentScreenStream) {
                 const canvasTrack = this.bgFilterStream.getVideoTracks()[0];
                 this.calls.forEach(call => {
@@ -951,21 +975,16 @@ class ComChat {
                     if (sender && canvasTrack) sender.replaceTrack(canvasTrack).catch(() => {});
                 });
             }
-            this.bgFilterBtn.classList.add('active');
+
+            this.showStatus(usedMediaPipe ? '背景フィルターを適用しました' : 'フィルターを適用しました', 'connected');
+
         } catch (err) {
-            console.error('Filter setup error:', err);
+            console.warn('Canvas pipeline failed, using CSS-only mode:', err);
             this.stopBgFilterLoop();
             this.cleanupBgFilterResources();
-            this.bgFilterType = 'none';
-            this.filterPanel.querySelectorAll('.filter-option').forEach(el => {
-                el.classList.toggle('active', el.dataset.filter === 'none');
-            });
-            if (localVideoEl && this.localStream) {
-                localVideoEl.srcObject = this.localStream;
-                localVideoEl.style.filter = '';
-            }
-            this.bgFilterBtn.classList.remove('active');
-            this.showStatus('背景フィルターを利用できません', 'error');
+            // Canvas が使えない場合は CSS filter をローカル表示に適用
+            if (localVideoEl) localVideoEl.style.filter = this.getCSSFilter(type);
+            this.showStatus('フィルターを適用しました', 'connected');
         }
     }
 
