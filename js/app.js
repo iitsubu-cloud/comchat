@@ -331,19 +331,25 @@ class ComChat {
             case 'screen-share-stop':
                 this.exitRemotePresenterMode();
                 break;
-            case 'file-meta':
-                this.receivingFiles.set(data.id, { meta: data, chunks: [] });
+            case 'file-meta': {
+                const senderName = this.usernames.get(senderId) || senderId;
+                const progress = this.createFileProgress(senderName, data.name, '受信中');
+                this.receivingFiles.set(data.id, { meta: data, chunks: [], received: 0, progress });
                 break;
+            }
             case 'file-chunk':
                 if (this.receivingFiles.has(data.id)) {
-                    this.receivingFiles.get(data.id).chunks[data.index] = data.data;
+                    const tf = this.receivingFiles.get(data.id);
+                    tf.chunks[data.index] = data.data;
+                    tf.received++;
+                    this.updateFileProgress(tf.progress, Math.round(tf.received / tf.meta.totalChunks * 100));
                 }
                 break;
             case 'file-done': {
                 const transfer = this.receivingFiles.get(data.id);
                 if (!transfer) break;
                 this.receivingFiles.delete(data.id);
-                const { meta, chunks } = transfer;
+                const { meta, chunks, progress } = transfer;
                 const buffers = [];
                 for (let i = 0; i < meta.totalChunks; i++) {
                     if (!chunks[i]) continue;
@@ -354,8 +360,7 @@ class ComChat {
                 }
                 const blob = new Blob(buffers, { type: meta.mimeType || 'application/octet-stream' });
                 const url = URL.createObjectURL(blob);
-                const senderName = this.usernames.get(senderId) || senderId;
-                this.displayFileMessage(senderName, meta.name, meta.size, url);
+                this.finalizeFileProgress(progress, meta.name, meta.size, url);
                 break;
             }
         }
@@ -463,57 +468,101 @@ class ComChat {
     }
 
     async sendFile(file) {
-        const MAX = 20 * 1024 * 1024;
+        const MAX = 200 * 1024 * 1024;
         if (file.size > MAX) {
-            this.showStatus('ファイルサイズは20MB以下にしてください', 'error');
+            this.showStatus('ファイルサイズは200MB以下にしてください', 'error');
             return;
         }
         const fileId = Math.random().toString(36).slice(2, 11);
         const CHUNK = 64 * 1024;
+        const BUFFER_HIGH = 512 * 1024;
+        const progress = this.createFileProgress(this.username, file.name, '送信中');
         try {
             const buffer = await file.arrayBuffer();
             const totalChunks = Math.ceil(buffer.byteLength / CHUNK) || 1;
             this.broadcast({ type: 'file-meta', id: fileId, name: file.name, size: file.size, mimeType: file.type, totalChunks });
             for (let i = 0; i < totalChunks; i++) {
+                await this.waitForBuffers(BUFFER_HIGH);
                 const slice = new Uint8Array(buffer, i * CHUNK, Math.min(CHUNK, buffer.byteLength - i * CHUNK));
                 let bin = '';
                 for (let j = 0; j < slice.length; j++) bin += String.fromCharCode(slice[j]);
                 this.broadcast({ type: 'file-chunk', id: fileId, index: i, data: btoa(bin) });
+                this.updateFileProgress(progress, Math.round((i + 1) / totalChunks * 100));
             }
             this.broadcast({ type: 'file-done', id: fileId });
             const url = URL.createObjectURL(file);
-            this.displayFileMessage(this.username, file.name, file.size, url);
+            this.finalizeFileProgress(progress, file.name, file.size, url);
         } catch (err) {
             console.error('File send error:', err);
+            progress.statusEl.textContent = '送信失敗';
+            progress.barInner.style.background = '#dc3545';
             this.showStatus('ファイルの送信に失敗しました', 'error');
         }
     }
 
-    displayFileMessage(username, filename, filesize, url) {
+    async waitForBuffers(threshold) {
+        const full = [];
+        for (const conn of this.connections.values()) {
+            const dc = conn.dataChannel;
+            if (dc && dc.bufferedAmount > threshold) full.push(dc);
+        }
+        if (full.length === 0) return;
+        await Promise.all(full.map(dc => new Promise(resolve => {
+            dc.bufferedAmountLowThreshold = Math.floor(threshold / 2);
+            const done = () => resolve();
+            dc.addEventListener('bufferedamountlow', done, { once: true });
+            setTimeout(() => { dc.removeEventListener('bufferedamountlow', done); resolve(); }, 5000);
+        })));
+    }
+
+    createFileProgress(username, filename, label) {
         const msgDiv = document.createElement('div');
         msgDiv.className = 'chat-file-msg';
-
         const nameEl = document.createElement('strong');
         nameEl.textContent = username + ':';
-
         const fileDiv = document.createElement('div');
-        fileDiv.className = 'file-info';
+        fileDiv.className = 'file-info file-progress';
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'file-progress-name';
+        nameSpan.textContent = filename;
+        const statusEl = document.createElement('span');
+        statusEl.className = 'file-progress-status';
+        statusEl.textContent = `${label}... 0%`;
+        const barWrap = document.createElement('div');
+        barWrap.className = 'file-progress-bar-wrap';
+        const barInner = document.createElement('div');
+        barInner.className = 'file-progress-bar';
+        barWrap.appendChild(barInner);
+        fileDiv.appendChild(nameSpan);
+        fileDiv.appendChild(statusEl);
+        fileDiv.appendChild(barWrap);
+        msgDiv.appendChild(nameEl);
+        msgDiv.appendChild(fileDiv);
+        this.chatMessages.appendChild(msgDiv);
+        this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+        return { fileDiv, statusEl, barInner, label };
+    }
 
+    updateFileProgress(progress, pct) {
+        progress.statusEl.textContent = `${progress.label}... ${pct}%`;
+        progress.barInner.style.width = `${pct}%`;
+        this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+    }
+
+    finalizeFileProgress(progress, filename, filesize, url) {
+        const { fileDiv } = progress;
+        fileDiv.classList.remove('file-progress');
+        fileDiv.innerHTML = '';
         const link = document.createElement('a');
         link.href = url;
         link.download = filename;
         link.textContent = filename;
         link.className = 'file-link';
-
         const sizeEl = document.createElement('span');
         sizeEl.className = 'file-size';
         sizeEl.textContent = this.formatFileSize(filesize);
-
         fileDiv.appendChild(link);
         fileDiv.appendChild(sizeEl);
-        msgDiv.appendChild(nameEl);
-        msgDiv.appendChild(fileDiv);
-        this.chatMessages.appendChild(msgDiv);
         this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
     }
 
