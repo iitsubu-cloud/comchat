@@ -422,6 +422,11 @@ body {
     color: white;
 }
 
+.control-btn.screen.active {
+    background: #e65c00;
+    box-shadow: 0 0 0 3px rgba(255, 193, 7, 0.45);
+}
+
 .control-btn.hangup {
     background: #dc3545;
     color: white;

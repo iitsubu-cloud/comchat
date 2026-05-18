@@ -179,6 +179,15 @@ class ComChat {
         this.peer.on('call', (call) => {
             this.handleIncomingCall(call);
         });
+
+        this.peer.on('error', (err) => {
+            console.error('Peer error:', err);
+            if (err.type === 'peer-unavailable') {
+                this.showStatus('接続先が見つかりませんでした', 'error');
+            } else if (['network', 'server-error', 'socket-error', 'socket-closed'].includes(err.type)) {
+                this.showStatus('接続が切断されました。再度お試しください', 'error');
+            }
+        });
     }
 
     async getUserMedia() {
@@ -232,7 +241,6 @@ class ComChat {
                     conn.send({ type: 'peer-list', peers: existingPeers });
                 }
             }
-            this.broadcastUserList();
             this.updateRoomInfo();
         });
 
@@ -249,7 +257,6 @@ class ComChat {
                 this.exitRemotePresenterMode();
             }
             if (!this.peer) return; // hangup済みなら何もしない
-            this.broadcastUserList();
             this.updateRoomInfo();
         });
     }
@@ -265,6 +272,12 @@ class ComChat {
         call.on('stream', (remoteStream) => {
             const label = this.usernames.get(call.peer) || call.peer;
             this.addVideoElement(call.peer, remoteStream, label);
+            // 画面共有中に遅れて参加した場合、共有画面を大画面に反映する
+            if (this.currentRemoteSharerId === call.peer) {
+                this.screenShareVideo.srcObject = remoteStream;
+                this.screenShareVideo.classList.remove('hidden');
+                this.screenSharePlaceholder.classList.add('hidden');
+            }
         });
 
         call.on('close', () => {
@@ -291,9 +304,6 @@ class ComChat {
                 if (labelDiv) labelDiv.textContent = data.username;
                 break;
             }
-            case 'user-list':
-                this.updateUserList(data.users);
-                break;
             case 'peer-list':
                 data.peers.forEach(({ id, username }) => {
                     if (!this.connections.has(id) && id !== this.peer.id) {
@@ -313,10 +323,6 @@ class ComChat {
                 this.exitRemotePresenterMode();
                 break;
         }
-    }
-
-    updateUserList(_users) {
-        // participant count is managed solely by updateRoomInfo()
     }
 
     updateRoomInfo() {
@@ -428,13 +434,6 @@ class ComChat {
         });
     }
 
-    broadcastUserList() {
-        if (!this.peer) return;
-        const users = Array.from(this.connections.keys());
-        users.push(this.peer.id);
-        this.broadcast({ type: 'user-list', users });
-    }
-
     async toggleVideo() {
         if (this.localStream) {
             const videoTrack = this.localStream.getVideoTracks()[0];
@@ -495,6 +494,7 @@ class ComChat {
 
             screenVideoTrack.onended = () => this.stopScreenShare();
 
+            this.shareScreenBtn.classList.add('active');
             this.broadcast({ type: 'screen-share-start', peerId: this.peer.id, username: this.username });
 
         } catch (error) {
@@ -561,6 +561,7 @@ class ComChat {
         this.callMain.classList.remove('presenter-mode');
         this.stopShareBtn.classList.add('hidden');
         this.currentScreenStream = null;
+        this.shareScreenBtn.classList.remove('active');
         this.broadcast({ type: 'screen-share-stop' });
         this.cameraVideoTrack = null;
     }
@@ -598,8 +599,10 @@ class ComChat {
         // ボタンの視覚状態をリセット（再入室時に前の状態が残らないように）
         this.toggleVideoBtn.classList.remove('off');
         this.toggleAudioBtn.classList.remove('off');
+        this.shareScreenBtn.classList.remove('active');
         this.createRoomBtn.disabled = false;
         this.joinRoomBtn.disabled = false;
+        this.confirmJoinBtn.disabled = false;
 
         this.videoGrid.innerHTML = '';
         this.showWelcomeScreen();
