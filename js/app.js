@@ -30,6 +30,7 @@ class ComChat {
         this.personCtx = null;
         this.smallCanvas = null;
         this.smallCtx = null;
+        this.prevConfidenceData = null;
         this.bgSourceIsOwned = false;
         this.imageCapture = null;
         this.objectURLs = [];
@@ -837,8 +838,15 @@ class ComChat {
         const confidence = result.confidenceMasks?.[0];
         if (!confidence || !this.maskImageData || !this.blurCtx || !this.personCtx) { result.close?.(); return; }
         const maskData = confidence.getAsUint8Array();
+        // Temporal smoothing: exponential moving average with previous frame's mask
+        // reduces boundary flickering when the person moves
+        if (!this.prevConfidenceData || this.prevConfidenceData.length !== maskData.length) {
+            this.prevConfidenceData = new Float32Array(maskData);
+        }
+        const ALPHA = 0.4; // current frame weight (lower = smoother but slower to track movement)
         for (let i = 0; i < maskData.length; i++) {
-            this.maskImageData.data[i * 4 + 3] = maskData[i];
+            this.prevConfidenceData[i] = ALPHA * maskData[i] + (1 - ALPHA) * this.prevConfidenceData[i];
+            this.maskImageData.data[i * 4 + 3] = this.prevConfidenceData[i];
         }
         this.maskCtx.putImageData(this.maskImageData, 0, 0);
         result.close?.();
@@ -959,6 +967,7 @@ class ComChat {
         this.personCtx = null;
         this.smallCanvas = null;
         this.smallCtx = null;
+        this.prevConfidenceData = null;
         this.bgFilterCanvas = null;
         this.bgFilterCtx = null;
         this.bgFilterStream = null;
