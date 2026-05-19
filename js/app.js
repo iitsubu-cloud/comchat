@@ -20,7 +20,10 @@ class ComChat {
         this.bgFilterStream = null;
         this.bgFilterAnimId = null;
         this.bgSourceVideo = null;
-        this.selfieSegmentation = null;
+        this.imageSegmenter = null;
+        this.maskCanvas = null;
+        this.maskCtx = null;
+        this.maskImageData = null;
         this.bgSourceIsOwned = false;
         this.imageCapture = null;
         this.objectURLs = [];
@@ -478,6 +481,8 @@ class ComChat {
     removeVideoElement(id) {
         const videoElement = document.getElementById(`video-${id}`);
         if (videoElement) {
+            const video = videoElement.querySelector('video');
+            if (video) video.srcObject = null;
             videoElement.remove();
         }
     }
@@ -558,11 +563,14 @@ class ComChat {
     async waitForBuffers(threshold) {
         const full = [];
         for (const conn of this.connections.values()) {
-            const dc = conn.dataChannel;
-            if (dc && dc.bufferedAmount > threshold) full.push(dc);
+            try {
+                const dc = conn.dataChannel;
+                if (dc && dc.bufferedAmount > threshold) full.push(dc);
+            } catch {}
         }
         if (full.length === 0) return;
         await Promise.all(full.map(dc => new Promise(resolve => {
+            if (!('bufferedAmountLowThreshold' in dc)) { resolve(); return; }
             dc.bufferedAmountLowThreshold = Math.floor(threshold / 2);
             const done = () => resolve();
             dc.addEventListener('bufferedamountlow', done, { once: true });
@@ -651,7 +659,7 @@ class ComChat {
                 this.bgFilterCtx.fillStyle = '#000';
                 this.bgFilterCtx.fillRect(0, 0, this.bgFilterCanvas.width, this.bgFilterCanvas.height);
             } else {
-                this.selfieSegmentation ? this.startBgFilterLoop() : this.startCSSFilterLoop();
+                this.imageSegmenter ? this.startBgFilterLoop() : this.startCSSFilterLoop();
             }
         }
     }
@@ -788,53 +796,51 @@ class ComChat {
     }
 
     async loadMediaPipe() {
-        if (window.SelfieSegmentation) return;
-        await new Promise((resolve, reject) => {
-            const s = document.createElement('script');
-            s.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js';
-            s.onload = () => {
-                if (window.SelfieSegmentation) {
-                    resolve();
-                } else {
-                    s.remove();
-                    reject(new Error('SelfieSegmentation not defined'));
-                }
-            };
-            s.onerror = () => { s.remove(); reject(new Error('スクリプト読み込み失敗')); };
-            document.head.appendChild(s);
-        });
+        if (window._mpTasks) return;
+        window._mpTasks = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
     }
 
     async initSelfieSegmentation() {
-        if (this.selfieSegmentation) return;
+        if (this.imageSegmenter) return;
         await this.loadMediaPipe();
-        this.selfieSegmentation = new window.SelfieSegmentation({
-            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
+        const { FilesetResolver, ImageSegmenter } = window._mpTasks;
+        const vision = await FilesetResolver.forVisionTasks(
+            'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+        );
+        this.imageSegmenter = await ImageSegmenter.createFromOptions(vision, {
+            baseOptions: {
+                modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite',
+                delegate: 'GPU',
+            },
+            runningMode: 'VIDEO',
+            outputCategoryMask: false,
+            outputConfidenceMasks: true,
         });
-        this.selfieSegmentation.setOptions({ modelSelection: 1 });
-        this.selfieSegmentation.onResults((r) => this.onSegmentationResults(r));
-        await Promise.race([
-            this.selfieSegmentation.initialize(),
-            new Promise((_, r) => setTimeout(() => r(new Error('MediaPipe timeout')), 12000))
-        ]);
     }
 
-    onSegmentationResults(results) {
-        if (this.bgFilterType === 'none' || !this.bgFilterCtx) return;
+    onSegmentationResults(result, sourceImage) {
+        if (this.bgFilterType === 'none' || !this.bgFilterCtx) { result.close?.(); return; }
         const ctx = this.bgFilterCtx;
         const w = this.bgFilterCanvas.width;
         const h = this.bgFilterCanvas.height;
-        // マスクをコピー（白=人物 → alpha で表現される）
+        const confidence = result.confidenceMasks?.[0];
+        if (!confidence || !this.maskImageData) { result.close?.(); return; }
+        // マスクデータをコピー（person confidence → alpha チャンネル）
+        const maskData = confidence.getAsUint8Array();
+        for (let i = 0; i < maskData.length; i++) {
+            this.maskImageData.data[i * 4 + 3] = maskData[i];
+        }
+        this.maskCtx.putImageData(this.maskImageData, 0, 0);
+        result.close?.();
+        // 人物マスクを alpha として描画、その後ろにフィルター済み背景を合成
         ctx.globalCompositeOperation = 'copy';
-        ctx.drawImage(results.segmentationMask, 0, 0, w, h);
-        // 人物エリアだけ元映像を残す
+        ctx.drawImage(this.maskCanvas, 0, 0, w, h);
         ctx.globalCompositeOperation = 'source-in';
         ctx.filter = 'none';
-        ctx.drawImage(results.image, 0, 0, w, h);
-        // フィルター済み背景を人物の後ろに合成
+        ctx.drawImage(sourceImage, 0, 0, w, h);
         ctx.globalCompositeOperation = 'destination-over';
         ctx.filter = this.getCSSFilter(this.bgFilterType);
-        ctx.drawImage(results.image, 0, 0, w, h);
+        ctx.drawImage(sourceImage, 0, 0, w, h);
         ctx.filter = 'none';
         ctx.globalCompositeOperation = 'source-over';
     }
@@ -844,14 +850,15 @@ class ComChat {
             if (this.bgFilterType === 'none') return;
             try {
                 if (this.imageCapture) {
-                    // ImageCapture: grab raw frame directly from track (no DOM throttling)
                     const bitmap = await this.imageCapture.grabFrame();
-                    if (this.selfieSegmentation && this.bgFilterType !== 'none') {
-                        await this.selfieSegmentation.send({ image: bitmap });
+                    if (this.imageSegmenter && this.bgFilterType !== 'none') {
+                        const result = this.imageSegmenter.segmentForVideo(bitmap, performance.now());
+                        this.onSegmentationResults(result, bitmap);
                     }
                     bitmap.close();
-                } else if (this.bgSourceVideo?.readyState >= 2 && this.selfieSegmentation) {
-                    await this.selfieSegmentation.send({ image: this.bgSourceVideo });
+                } else if (this.bgSourceVideo?.readyState >= 2 && this.imageSegmenter) {
+                    const result = this.imageSegmenter.segmentForVideo(this.bgSourceVideo, performance.now());
+                    this.onSegmentationResults(result, this.bgSourceVideo);
                 }
             } catch (e) {}
             this.bgFilterAnimId = requestAnimationFrame(loop);
@@ -908,10 +915,13 @@ class ComChat {
         this.bgSourceVideo = null;
         this.bgSourceIsOwned = false;
         this.imageCapture = null;
-        if (this.selfieSegmentation) {
-            this.selfieSegmentation.close();
-            this.selfieSegmentation = null;
+        if (this.imageSegmenter) {
+            this.imageSegmenter.close();
+            this.imageSegmenter = null;
         }
+        this.maskCanvas = null;
+        this.maskCtx = null;
+        this.maskImageData = null;
         this.bgFilterCanvas = null;
         this.bgFilterCtx = null;
         this.bgFilterStream = null;
@@ -951,8 +961,12 @@ class ComChat {
         }
 
         if (wasActive) {
-            // Filter type changed while active: bgFilterType already updated,
-            // canvas loop reads it dynamically. No other action needed.
+            // CSS-only fallback: no canvas, update style.filter directly
+            if (!this.bgFilterCanvas) {
+                const localVideoEl = document.querySelector('#video-local .video-element');
+                if (localVideoEl) localVideoEl.style.filter = this.getCSSFilter(type);
+            }
+            // Canvas loop reads bgFilterType dynamically — no other action needed.
             return;
         }
 
@@ -1023,11 +1037,22 @@ class ComChat {
             try {
                 this.showStatus('背景フィルターを読み込み中...', 'connecting');
                 await this.initSelfieSegmentation();
+                // マスク合成用キャンバスを事前確保（フレームごとの alloc を避ける）
+                this.maskCanvas = document.createElement('canvas');
+                this.maskCanvas.width = srcW;
+                this.maskCanvas.height = srcH;
+                this.maskCtx = this.maskCanvas.getContext('2d');
+                this.maskImageData = this.maskCtx.createImageData(srcW, srcH);
+                for (let i = 0; i < this.maskImageData.data.length; i += 4) {
+                    this.maskImageData.data[i] = 255;
+                    this.maskImageData.data[i + 1] = 255;
+                    this.maskImageData.data[i + 2] = 255;
+                }
                 this.startBgFilterLoop();
                 usedMediaPipe = true;
             } catch (mpErr) {
                 console.warn('MediaPipe unavailable, falling back to CSS filter:', mpErr);
-                if (this.selfieSegmentation) { this.selfieSegmentation.close(); this.selfieSegmentation = null; }
+                if (this.imageSegmenter) { this.imageSegmenter.close(); this.imageSegmenter = null; }
                 this.startCSSFilterLoop();
             }
 
@@ -1061,6 +1086,11 @@ class ComChat {
     hangup() {
         if (this.currentScreenStream) this.stopScreenShare();
 
+        // Stop bg filter loop before stopping localStream to avoid reading stopped tracks
+        this.stopBgFilterLoop();
+        this.cleanupBgFilterResources();
+        this.bgFilterType = 'none';
+
         this.connections.forEach((conn) => conn.close());
         this.connections.clear();
 
@@ -1088,10 +1118,6 @@ class ComChat {
         this.currentScreenStream = null;
         this.cameraVideoTrack = null;
         this.isConnecting = false;
-
-        this.stopBgFilterLoop();
-        this.cleanupBgFilterResources();
-        this.bgFilterType = 'none';
 
         // ボタンの視覚状態をリセット（再入室時に前の状態が残らないように）
         this.toggleVideoBtn.classList.remove('off');
