@@ -815,8 +815,8 @@ class ComChat {
                 delegate: 'GPU',
             },
             runningMode: 'VIDEO',
-            outputCategoryMask: true,
-            outputConfidenceMasks: false,
+            outputCategoryMask: false,
+            outputConfidenceMasks: true,
         });
     }
 
@@ -825,12 +825,12 @@ class ComChat {
         const ctx = this.bgFilterCtx;
         const w = this.bgFilterCanvas.width;
         const h = this.bgFilterCanvas.height;
-        const categoryMask = result.categoryMask;
-        if (!categoryMask || !this.maskImageData) { result.close?.(); return; }
-        // categoryMask: 0=background, 1=person — set alpha 255 for person, 0 for background
-        const maskData = categoryMask.getAsUint8Array();
+        const confidence = result.confidenceMasks?.[0];
+        if (!confidence || !this.maskImageData) { result.close?.(); return; }
+        // confidenceMasks[0] = person confidence: 0=background, 255=person
+        const maskData = confidence.getAsUint8Array();
         for (let i = 0; i < maskData.length; i++) {
-            this.maskImageData.data[i * 4 + 3] = maskData[i] === 1 ? 255 : 0;
+            this.maskImageData.data[i * 4 + 3] = maskData[i];
         }
         this.maskCtx.putImageData(this.maskImageData, 0, 0);
         result.close?.();
