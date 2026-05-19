@@ -24,6 +24,10 @@ class ComChat {
         this.maskCanvas = null;
         this.maskCtx = null;
         this.maskImageData = null;
+        this.blurCanvas = null;
+        this.blurCtx = null;
+        this.personCanvas = null;
+        this.personCtx = null;
         this.bgSourceIsOwned = false;
         this.imageCapture = null;
         this.objectURLs = [];
@@ -809,15 +813,18 @@ class ComChat {
                 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
             );
         }
-        this.imageSegmenter = await ImageSegmenter.createFromOptions(window._mpVision, {
-            baseOptions: {
-                modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite',
-                delegate: 'GPU',
-            },
-            runningMode: 'VIDEO',
-            outputCategoryMask: false,
-            outputConfidenceMasks: true,
-        });
+        const modelAssetPath = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite';
+        const segOpts = { runningMode: 'VIDEO', outputCategoryMask: false, outputConfidenceMasks: true };
+        try {
+            this.imageSegmenter = await ImageSegmenter.createFromOptions(window._mpVision, {
+                ...segOpts, baseOptions: { modelAssetPath, delegate: 'GPU' },
+            });
+        } catch {
+            // GPU delegate fails in Safari due to WebGL incompatibility — fall back to CPU
+            this.imageSegmenter = await ImageSegmenter.createFromOptions(window._mpVision, {
+                ...segOpts, baseOptions: { modelAssetPath, delegate: 'CPU' },
+            });
+        }
     }
 
     onSegmentationResults(result, sourceImage) {
@@ -826,24 +833,31 @@ class ComChat {
         const w = this.bgFilterCanvas.width;
         const h = this.bgFilterCanvas.height;
         const confidence = result.confidenceMasks?.[0];
-        if (!confidence || !this.maskImageData) { result.close?.(); return; }
-        // confidenceMasks[0] = person confidence: 0=background, 255=person
+        if (!confidence || !this.maskImageData || !this.blurCtx || !this.personCtx) { result.close?.(); return; }
         const maskData = confidence.getAsUint8Array();
         for (let i = 0; i < maskData.length; i++) {
             this.maskImageData.data[i * 4 + 3] = maskData[i];
         }
         this.maskCtx.putImageData(this.maskImageData, 0, 0);
         result.close?.();
-        // 人物マスクを alpha として描画、その後ろにフィルター済み背景を合成
+
+        // Step 1: pre-render blurred background to blurCanvas (simple source-over + filter)
+        this.blurCtx.filter = this.getCSSFilter(this.bgFilterType);
+        this.blurCtx.drawImage(sourceImage, 0, 0, w, h);
+        this.blurCtx.filter = 'none';
+
+        // Step 2: extract sharp person pixels into personCanvas
+        this.personCtx.globalCompositeOperation = 'copy';
+        this.personCtx.drawImage(this.maskCanvas, 0, 0, w, h);
+        this.personCtx.globalCompositeOperation = 'source-in';
+        this.personCtx.drawImage(sourceImage, 0, 0, w, h);
+        this.personCtx.globalCompositeOperation = 'source-over';
+
+        // Step 3: composite — blurred background then sharp person on top (only source-over)
         ctx.globalCompositeOperation = 'copy';
-        ctx.drawImage(this.maskCanvas, 0, 0, w, h);
-        ctx.globalCompositeOperation = 'source-in';
-        ctx.filter = 'none';
-        ctx.drawImage(sourceImage, 0, 0, w, h);
-        ctx.globalCompositeOperation = 'destination-over';
-        ctx.filter = this.getCSSFilter(this.bgFilterType);
-        ctx.drawImage(sourceImage, 0, 0, w, h);
-        ctx.filter = 'none';
+        ctx.drawImage(this.blurCanvas, 0, 0, w, h);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.drawImage(this.personCanvas, 0, 0, w, h);
         ctx.globalCompositeOperation = 'source-over';
     }
 
@@ -924,6 +938,10 @@ class ComChat {
         this.maskCanvas = null;
         this.maskCtx = null;
         this.maskImageData = null;
+        this.blurCanvas = null;
+        this.blurCtx = null;
+        this.personCanvas = null;
+        this.personCtx = null;
         this.bgFilterCanvas = null;
         this.bgFilterCtx = null;
         this.bgFilterStream = null;
@@ -1024,13 +1042,6 @@ class ComChat {
             this.bgFilterCanvas.height = srcH;
             this.bgFilterCtx = this.bgFilterCanvas.getContext('2d');
 
-            if (!('filter' in this.bgFilterCtx)) {
-                this.cleanupBgFilterResources();
-                if (localVideoEl) localVideoEl.style.filter = this.getCSSFilter(type);
-                this.showStatus('フィルターを適用しました（自分の画面のみ）', 'connected');
-                return;
-            }
-
             this.bgFilterStream = this.bgFilterCanvas.captureStream(30);
             if (!this.bgFilterStream.getVideoTracks().length) throw new Error('captureStream no tracks');
 
@@ -1050,6 +1061,14 @@ class ComChat {
                     this.maskImageData.data[i + 1] = 255;
                     this.maskImageData.data[i + 2] = 255;
                 }
+                this.blurCanvas = document.createElement('canvas');
+                this.blurCanvas.width = srcW;
+                this.blurCanvas.height = srcH;
+                this.blurCtx = this.blurCanvas.getContext('2d');
+                this.personCanvas = document.createElement('canvas');
+                this.personCanvas.width = srcW;
+                this.personCanvas.height = srcH;
+                this.personCtx = this.personCanvas.getContext('2d');
                 this.startBgFilterLoop();
                 usedMediaPipe = true;
             } catch (mpErr) {
