@@ -804,17 +804,19 @@ class ComChat {
         if (this.imageSegmenter) return;
         await this.loadMediaPipe();
         const { FilesetResolver, ImageSegmenter } = window._mpTasks;
-        const vision = await FilesetResolver.forVisionTasks(
-            'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
-        );
-        this.imageSegmenter = await ImageSegmenter.createFromOptions(vision, {
+        if (!window._mpVision) {
+            window._mpVision = await FilesetResolver.forVisionTasks(
+                'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+            );
+        }
+        this.imageSegmenter = await ImageSegmenter.createFromOptions(window._mpVision, {
             baseOptions: {
                 modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite',
                 delegate: 'GPU',
             },
             runningMode: 'VIDEO',
-            outputCategoryMask: false,
-            outputConfidenceMasks: true,
+            outputCategoryMask: true,
+            outputConfidenceMasks: false,
         });
     }
 
@@ -823,12 +825,12 @@ class ComChat {
         const ctx = this.bgFilterCtx;
         const w = this.bgFilterCanvas.width;
         const h = this.bgFilterCanvas.height;
-        const confidence = result.confidenceMasks?.[0];
-        if (!confidence || !this.maskImageData) { result.close?.(); return; }
-        // マスクデータをコピー（person confidence → alpha チャンネル）
-        const maskData = confidence.getAsUint8Array();
+        const categoryMask = result.categoryMask;
+        if (!categoryMask || !this.maskImageData) { result.close?.(); return; }
+        // categoryMask: 0=background, 1=person — set alpha 255 for person, 0 for background
+        const maskData = categoryMask.getAsUint8Array();
         for (let i = 0; i < maskData.length; i++) {
-            this.maskImageData.data[i * 4 + 3] = maskData[i];
+            this.maskImageData.data[i * 4 + 3] = maskData[i] === 1 ? 255 : 0;
         }
         this.maskCtx.putImageData(this.maskImageData, 0, 0);
         result.close?.();
