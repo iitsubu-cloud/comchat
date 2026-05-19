@@ -30,8 +30,6 @@ class ComChat {
         this.personCtx = null;
         this.smallCanvas = null;
         this.smallCtx = null;
-        this.maskSmallCanvas = null;
-        this.maskSmallCtx = null;
         this.prevConfidenceData = null;
         this.bgSourceIsOwned = false;
         this.imageCapture = null;
@@ -845,23 +843,19 @@ class ComChat {
         if (!this.prevConfidenceData || this.prevConfidenceData.length !== maskData.length) {
             this.prevConfidenceData = new Float32Array(maskData);
         }
-        const ALPHA = 0.2; // current frame weight (lower = smoother but slower to track movement)
+        // Temporal smoothing: exponential moving average stabilises boundary jitter
+        const ALPHA = 0.35;
+        // Contrast thresholds: pixels clearly in/out of person are clamped to 0 or 255,
+        // only the narrow boundary zone (80–180) gets a soft linear blend.
+        // This keeps the outline sharp while suppressing flicker at the edges.
+        const LOW = 80, HIGH = 180, RANGE = HIGH - LOW;
         for (let i = 0; i < maskData.length; i++) {
             this.prevConfidenceData[i] = ALPHA * maskData[i] + (1 - ALPHA) * this.prevConfidenceData[i];
-            this.maskImageData.data[i * 4 + 3] = this.prevConfidenceData[i];
+            const s = this.prevConfidenceData[i];
+            this.maskImageData.data[i * 4 + 3] = s <= LOW ? 0 : s >= HIGH ? 255 : (s - LOW) / RANGE * 255;
         }
         this.maskCtx.putImageData(this.maskImageData, 0, 0);
         result.close?.();
-
-        // Spatial edge smoothing: scale mask down to 1/4 then back up to feather boundaries
-        if (this.maskSmallCtx) {
-            this.maskSmallCtx.drawImage(this.maskCanvas, 0, 0, this.maskSmallCanvas.width, this.maskSmallCanvas.height);
-            this.maskCtx.globalCompositeOperation = 'copy';
-            this.maskCtx.imageSmoothingEnabled = true;
-            this.maskCtx.imageSmoothingQuality = 'high';
-            this.maskCtx.drawImage(this.maskSmallCanvas, 0, 0, w, h);
-            this.maskCtx.globalCompositeOperation = 'source-over';
-        }
 
         // Step 1: pre-render background effect to blurCanvas
         if (this.bgFilterType === 'blur' && this.smallCtx) {
@@ -979,8 +973,6 @@ class ComChat {
         this.personCtx = null;
         this.smallCanvas = null;
         this.smallCtx = null;
-        this.maskSmallCanvas = null;
-        this.maskSmallCtx = null;
         this.prevConfidenceData = null;
         this.bgFilterCanvas = null;
         this.bgFilterCtx = null;
@@ -1115,11 +1107,6 @@ class ComChat {
                 this.smallCanvas.width = Math.max(1, Math.floor(srcW / 8));
                 this.smallCanvas.height = Math.max(1, Math.floor(srcH / 8));
                 this.smallCtx = this.smallCanvas.getContext('2d');
-                // maskSmallCanvas: 1/4 scale for mask edge feathering
-                this.maskSmallCanvas = document.createElement('canvas');
-                this.maskSmallCanvas.width = Math.max(1, Math.floor(srcW / 4));
-                this.maskSmallCanvas.height = Math.max(1, Math.floor(srcH / 4));
-                this.maskSmallCtx = this.maskSmallCanvas.getContext('2d');
                 this.startBgFilterLoop();
                 usedMediaPipe = true;
             } catch (mpErr) {
