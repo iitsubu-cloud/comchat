@@ -797,20 +797,16 @@ class ComChat {
 
     async loadMediaPipe() {
         if (window._mpTasks) return;
-        console.log('[ComChat] MediaPipe: importing tasks-vision module...');
         window._mpTasks = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
-        console.log('[ComChat] MediaPipe: module loaded OK');
     }
 
     async initSelfieSegmentation() {
         if (this.imageSegmenter) return;
         await this.loadMediaPipe();
-        console.log('[ComChat] MediaPipe: resolving WASM files...');
         const { FilesetResolver, ImageSegmenter } = window._mpTasks;
         const vision = await FilesetResolver.forVisionTasks(
             'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
         );
-        console.log('[ComChat] MediaPipe: WASM resolved, creating ImageSegmenter...');
         this.imageSegmenter = await ImageSegmenter.createFromOptions(vision, {
             baseOptions: {
                 modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite',
@@ -820,7 +816,6 @@ class ComChat {
             outputCategoryMask: false,
             outputConfidenceMasks: true,
         });
-        console.log('[ComChat] MediaPipe: ImageSegmenter ready');
     }
 
     onSegmentationResults(result, sourceImage) {
@@ -865,7 +860,7 @@ class ComChat {
                     const result = this.imageSegmenter.segmentForVideo(this.bgSourceVideo, performance.now());
                     this.onSegmentationResults(result, this.bgSourceVideo);
                 }
-            } catch (e) { console.error('[ComChat] BgFilter loop error:', e); }
+            } catch (e) {}
             this.bgFilterAnimId = requestAnimationFrame(loop);
         };
         this.bgFilterAnimId = requestAnimationFrame(loop);
@@ -1056,7 +1051,7 @@ class ComChat {
                 this.startBgFilterLoop();
                 usedMediaPipe = true;
             } catch (mpErr) {
-                console.warn('[ComChat] MediaPipe failed, CSS fallback:', mpErr);
+                console.warn('MediaPipe unavailable, falling back to CSS filter:', mpErr);
                 if (this.imageSegmenter) { this.imageSegmenter.close(); this.imageSegmenter = null; }
                 this.startCSSFilterLoop();
             }
