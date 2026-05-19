@@ -1087,10 +1087,10 @@ class ComChat {
                 this.personCanvas.width = srcW;
                 this.personCanvas.height = srcH;
                 this.personCtx = this.personCanvas.getContext('2d');
-                // smallCanvas: 1/6 scale for smooth blur (Safari ctx.filter blur is broken)
+                // smallCanvas: 1/8 scale for smooth blur (Safari ctx.filter blur is broken)
                 this.smallCanvas = document.createElement('canvas');
-                this.smallCanvas.width = Math.max(1, Math.floor(srcW / 6));
-                this.smallCanvas.height = Math.max(1, Math.floor(srcH / 6));
+                this.smallCanvas.width = Math.max(1, Math.floor(srcW / 8));
+                this.smallCanvas.height = Math.max(1, Math.floor(srcH / 8));
                 this.smallCtx = this.smallCanvas.getContext('2d');
                 this.startBgFilterLoop();
                 usedMediaPipe = true;
