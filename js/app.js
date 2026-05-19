@@ -22,6 +22,7 @@ class ComChat {
         this.bgSourceVideo = null;
         this.selfieSegmentation = null;
         this.bgSourceIsOwned = false;
+        this.imageCapture = null;
         this.objectURLs = [];
 
         this.initializeUI();
@@ -841,9 +842,18 @@ class ComChat {
     startBgFilterLoop() {
         const loop = async () => {
             if (this.bgFilterType === 'none') return;
-            if (this.bgSourceVideo?.readyState >= 2 && this.selfieSegmentation) {
-                await this.selfieSegmentation.send({ image: this.bgSourceVideo });
-            }
+            try {
+                if (this.imageCapture) {
+                    // ImageCapture: grab raw frame directly from track (no DOM throttling)
+                    const bitmap = await this.imageCapture.grabFrame();
+                    if (this.selfieSegmentation && this.bgFilterType !== 'none') {
+                        await this.selfieSegmentation.send({ image: bitmap });
+                    }
+                    bitmap.close();
+                } else if (this.bgSourceVideo?.readyState >= 2 && this.selfieSegmentation) {
+                    await this.selfieSegmentation.send({ image: this.bgSourceVideo });
+                }
+            } catch (e) {}
             this.bgFilterAnimId = requestAnimationFrame(loop);
         };
         this.bgFilterAnimId = requestAnimationFrame(loop);
@@ -851,8 +861,23 @@ class ComChat {
 
     startCSSFilterLoop() {
         const draw = () => {
-            if (this.bgFilterType === 'none' || !this.bgSourceVideo || !this.bgFilterCtx) return;
-            if (this.bgSourceVideo.readyState >= 2) {
+            if (this.bgFilterType === 'none' || !this.bgFilterCtx) return;
+            if (this.imageCapture) {
+                // ImageCapture: grab frame asynchronously, draw when ready
+                this.imageCapture.grabFrame().then(bitmap => {
+                    if (this.bgFilterType === 'none' || !this.bgFilterCtx) { bitmap.close(); return; }
+                    const vw = bitmap.width;
+                    const vh = bitmap.height;
+                    if (vw > 0 && this.bgFilterCanvas.width !== vw) {
+                        this.bgFilterCanvas.width = vw;
+                        this.bgFilterCanvas.height = vh;
+                    }
+                    this.bgFilterCtx.filter = this.getCSSFilter(this.bgFilterType);
+                    this.bgFilterCtx.drawImage(bitmap, 0, 0, this.bgFilterCanvas.width, this.bgFilterCanvas.height);
+                    this.bgFilterCtx.filter = 'none';
+                    bitmap.close();
+                }).catch(() => {});
+            } else if (this.bgSourceVideo?.readyState >= 2) {
                 const vw = this.bgSourceVideo.videoWidth;
                 const vh = this.bgSourceVideo.videoHeight;
                 if (vw > 0 && this.bgFilterCanvas.width !== vw) {
@@ -877,12 +902,12 @@ class ComChat {
 
     cleanupBgFilterResources() {
         if (this.bgSourceVideo && this.bgSourceIsOwned) {
-            // Only destroy bgSourceVideo if we created it (not when it's localVideoEl)
             this.bgSourceVideo.srcObject = null;
             this.bgSourceVideo.remove();
         }
         this.bgSourceVideo = null;
         this.bgSourceIsOwned = false;
+        this.imageCapture = null;
         if (this.selfieSegmentation) {
             this.selfieSegmentation.close();
             this.selfieSegmentation = null;
@@ -926,8 +951,8 @@ class ComChat {
         }
 
         if (wasActive) {
-            // Filter type changed while already active: update CSS preview and let canvas loop pick up new type
-            if (localVideoEl) localVideoEl.style.filter = this.getCSSFilter(type);
+            // Filter type changed while active: bgFilterType already updated,
+            // canvas loop reads it dynamically. No other action needed.
             return;
         }
 
@@ -935,24 +960,47 @@ class ComChat {
         this.bgFilterBtn.classList.add('active');
 
         try {
-            if (!localVideoEl) throw new Error('local video not found');
+            const videoTrack = this.localStream?.getVideoTracks()[0];
+            let srcW = 0, srcH = 0;
 
-            // Wait for video frame data (should be instant since it's already playing)
-            if (localVideoEl.readyState < 2 || !localVideoEl.videoWidth) {
-                await new Promise(r => {
-                    localVideoEl.addEventListener('loadeddata', r, { once: true });
-                    setTimeout(r, 3000);
-                });
+            // Strategy 1: ImageCapture API — reads frames directly from the video track,
+            // bypassing DOM video element throttling entirely. Works on Safari 17.2+ and Chrome 59+.
+            if (videoTrack && typeof ImageCapture !== 'undefined') {
+                try {
+                    const ic = new ImageCapture(videoTrack);
+                    const probe = await ic.grabFrame();
+                    srcW = probe.width;
+                    srcH = probe.height;
+                    probe.close();
+                    this.imageCapture = ic;
+                } catch (icErr) {
+                    console.warn('ImageCapture unavailable:', icErr);
+                    this.imageCapture = null;
+                }
             }
-            if (!localVideoEl.videoWidth) throw new Error('video not ready');
 
-            // Use the already-visible local video element directly as canvas draw source.
-            // A small hidden video element gets throttled by Safari; the visible one does not.
-            this.bgSourceVideo = localVideoEl;
-            this.bgSourceIsOwned = false; // We don't own this element — cleanupBgFilterResources must not remove it
+            // Strategy 2: Hidden bgSourceVideo fallback (for browsers without ImageCapture)
+            if (!this.imageCapture) {
+                this.bgSourceVideo = document.createElement('video');
+                this.bgSourceVideo.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;pointer-events:none;z-index:-9999;opacity:0.01;object-fit:cover;';
+                this.bgSourceVideo.muted = true;
+                this.bgSourceVideo.autoplay = true;
+                this.bgSourceVideo.playsInline = true;
+                this.bgSourceVideo.srcObject = this.localStream;
+                this.bgSourceIsOwned = true;
+                document.body.appendChild(this.bgSourceVideo);
+                await this.bgSourceVideo.play().catch(() => {});
+                if (this.bgSourceVideo.readyState < 2) {
+                    await new Promise(r => {
+                        this.bgSourceVideo.addEventListener('loadeddata', r, { once: true });
+                        setTimeout(r, 5000);
+                    });
+                }
+                srcW = this.bgSourceVideo.videoWidth;
+                srcH = this.bgSourceVideo.videoHeight;
+            }
 
-            const srcW = localVideoEl.videoWidth;
-            const srcH = localVideoEl.videoHeight;
+            if (!srcW || !srcH) throw new Error('could not determine video dimensions');
 
             // Canvas setup + ctx.filter support check (unsupported on Safari < 18)
             this.bgFilterCanvas = document.createElement('canvas');
@@ -961,12 +1009,8 @@ class ComChat {
             this.bgFilterCtx = this.bgFilterCanvas.getContext('2d');
 
             if (!('filter' in this.bgFilterCtx)) {
-                // Canvas filter unsupported: CSS-only local preview, no remote filtering
-                this.bgSourceVideo = null;
-                this.bgSourceIsOwned = false;
-                this.bgFilterCanvas = null;
-                this.bgFilterCtx = null;
-                localVideoEl.style.filter = this.getCSSFilter(type);
+                this.cleanupBgFilterResources();
+                if (localVideoEl) localVideoEl.style.filter = this.getCSSFilter(type);
                 this.showStatus('フィルターを適用しました（自分の画面のみ）', 'connected');
                 return;
             }
@@ -974,12 +1018,7 @@ class ComChat {
             this.bgFilterStream = this.bgFilterCanvas.captureStream(30);
             if (!this.bgFilterStream.getVideoTracks().length) throw new Error('captureStream no tracks');
 
-            // Apply CSS filter to local preview.
-            // ctx.drawImage captures raw pixels (not CSS-filtered output), so we apply
-            // the canvas filter in the draw loop AND CSS filter visually for the local tile.
-            localVideoEl.style.filter = this.getCSSFilter(type);
-
-            // Try MediaPipe for person segmentation; fall back to whole-frame CSS filter loop
+            // Try MediaPipe for background segmentation (person stays sharp)
             let usedMediaPipe = false;
             try {
                 this.showStatus('背景フィルターを読み込み中...', 'connecting');
@@ -992,7 +1031,14 @@ class ComChat {
                 this.startCSSFilterLoop();
             }
 
-            // Send canvas-filtered track to remote peers (local srcObject unchanged)
+            // Switch local preview to canvas output (shows same result as remote peers)
+            if (localVideoEl) {
+                localVideoEl.srcObject = this.bgFilterStream;
+                localVideoEl.style.filter = '';
+                localVideoEl.play().catch(() => {});
+            }
+
+            // Send canvas track to remote peers
             if (!this.currentScreenStream) {
                 const canvasTrack = this.bgFilterStream.getVideoTracks()[0];
                 this.calls.forEach(call => {
@@ -1004,10 +1050,9 @@ class ComChat {
             this.showStatus(usedMediaPipe ? '背景フィルターを適用しました' : 'フィルターを適用しました', 'connected');
 
         } catch (err) {
-            console.warn('Canvas pipeline failed, using CSS-only mode:', err);
+            console.warn('Filter setup failed, using CSS-only mode:', err);
             this.stopBgFilterLoop();
             this.cleanupBgFilterResources();
-            // Canvas が使えない場合は CSS filter をローカル表示に適用
             if (localVideoEl) localVideoEl.style.filter = this.getCSSFilter(type);
             this.showStatus('フィルターを適用しました（自分の画面のみ）', 'connected');
         }
