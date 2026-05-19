@@ -21,6 +21,7 @@ class ComChat {
         this.bgFilterAnimId = null;
         this.bgSourceVideo = null;
         this.selfieSegmentation = null;
+        this.objectURLs = [];
 
         this.initializeUI();
     }
@@ -195,15 +196,20 @@ class ComChat {
         return new Promise((resolve, reject) => {
             this.peer = new Peer(id, { debug: 0 });
 
-            this.peer.on('open', (peerId) => {
+            const onOpen = (peerId) => {
+                this.peer.off('error', onError);
                 console.log('Peer connected with ID:', peerId);
                 resolve(peerId);
-            });
+            };
 
-            this.peer.on('error', (error) => {
+            const onError = (error) => {
+                this.peer.off('open', onOpen);
                 console.error('Peer error:', error);
                 reject(error);
-            });
+            };
+
+            this.peer.on('open', onOpen);
+            this.peer.on('error', onError);
         });
     }
 
@@ -507,7 +513,10 @@ class ComChat {
             this.showStatus('ファイルサイズは200MB以下にしてください', 'error');
             return;
         }
-        const fileId = Math.random().toString(36).slice(2, 11);
+        const idBytes = new Uint8Array(9);
+        crypto.getRandomValues(idBytes);
+        const idChars = '0123456789abcdefghijklmnopqrstuvwxyz';
+        const fileId = Array.from(idBytes, b => idChars[b % 36]).join('');
         const CHUNK = 64 * 1024;
         const BUFFER_HIGH = 512 * 1024;
         this.isSendingFile = true;
@@ -520,8 +529,13 @@ class ComChat {
             for (let i = 0; i < totalChunks; i++) {
                 await this.waitForBuffers(BUFFER_HIGH);
                 const slice = new Uint8Array(buffer, i * CHUNK, Math.min(CHUNK, buffer.byteLength - i * CHUNK));
+                // Build binary string in 8 KB sub-batches to avoid O(n²) string concat
+                // and stack overflow from apply() on large arrays.
+                const SAFE = 8192;
                 let bin = '';
-                for (let j = 0; j < slice.length; j++) bin += String.fromCharCode(slice[j]);
+                for (let j = 0; j < slice.length; j += SAFE) {
+                    bin += String.fromCharCode.apply(null, slice.subarray(j, j + SAFE));
+                }
                 this.broadcast({ type: 'file-chunk', id: fileId, index: i, data: btoa(bin) });
                 this.updateFileProgress(progress, Math.round((i + 1) / totalChunks * 100));
             }
@@ -602,6 +616,7 @@ class ComChat {
         sizeEl.textContent = this.formatFileSize(filesize);
         fileDiv.appendChild(link);
         fileDiv.appendChild(sizeEl);
+        this.objectURLs.push(url);
         this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
     }
 
@@ -620,11 +635,21 @@ class ComChat {
     }
 
     async toggleVideo() {
-        if (this.localStream) {
-            const videoTrack = this.localStream.getVideoTracks()[0];
-            if (videoTrack) {
-                videoTrack.enabled = !videoTrack.enabled;
-                this.toggleVideoBtn.classList.toggle('off', !videoTrack.enabled);
+        if (!this.localStream) return;
+        const videoTrack = this.localStream.getVideoTracks()[0];
+        if (!videoTrack) return;
+        videoTrack.enabled = !videoTrack.enabled;
+        this.toggleVideoBtn.classList.toggle('off', !videoTrack.enabled);
+        // When bg filter is active, the sent stream is a canvas capture.
+        // Disabling localStream's track freezes the canvas on the last frame.
+        // Stop the loop and draw black (off) or resume (on).
+        if (this.bgFilterType !== 'none' && this.bgFilterCtx && this.bgFilterCanvas) {
+            if (!videoTrack.enabled) {
+                this.stopBgFilterLoop();
+                this.bgFilterCtx.fillStyle = '#000';
+                this.bgFilterCtx.fillRect(0, 0, this.bgFilterCanvas.width, this.bgFilterCanvas.height);
+            } else {
+                this.selfieSegmentation ? this.startBgFilterLoop() : this.startCSSFilterLoop();
             }
         }
     }
@@ -648,6 +673,7 @@ class ComChat {
     }
 
     async shareScreen() {
+        if (this.currentScreenStream) return;
         try {
             const screenStream = await navigator.mediaDevices.getDisplayMedia({
                 video: true,
@@ -764,8 +790,15 @@ class ComChat {
         await new Promise((resolve, reject) => {
             const s = document.createElement('script');
             s.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js';
-            s.onload = () => window.SelfieSegmentation ? resolve() : reject(new Error('SelfieSegmentation not defined'));
-            s.onerror = () => reject(new Error('スクリプト読み込み失敗'));
+            s.onload = () => {
+                if (window.SelfieSegmentation) {
+                    resolve();
+                } else {
+                    s.remove();
+                    reject(new Error('SelfieSegmentation not defined'));
+                }
+            };
+            s.onerror = () => { s.remove(); reject(new Error('スクリプト読み込み失敗')); };
             document.head.appendChild(s);
         });
     }
@@ -939,7 +972,7 @@ class ComChat {
                 // Canvas に黒フレームを送信しないためリソースを解放
                 this.cleanupBgFilterResources();
                 if (localVideoEl) localVideoEl.style.filter = this.getCSSFilter(type);
-                this.showStatus('フィルターを適用しました', 'connected');
+                this.showStatus('フィルターを適用しました（自分の画面のみ）', 'connected');
                 return;
             }
 
@@ -957,7 +990,7 @@ class ComChat {
                 // Canvas フィルター未対応: CSS filter をローカル表示に直接適用
                 this.cleanupBgFilterResources();
                 if (localVideoEl) localVideoEl.style.filter = this.getCSSFilter(type);
-                this.showStatus('フィルターを適用しました', 'connected');
+                this.showStatus('フィルターを適用しました（自分の画面のみ）', 'connected');
                 return;
             }
 
@@ -995,7 +1028,7 @@ class ComChat {
                 });
             }
 
-            this.showStatus(usedMediaPipe ? '背景フィルターを適用しました' : 'フィルターを適用しました', 'connected');
+            this.showStatus(usedMediaPipe ? '背景フィルターを適用しました' : 'フィルターを適用しました（自分の画面のみ）', 'connected');
 
         } catch (err) {
             console.warn('Canvas pipeline failed, using CSS-only mode:', err);
@@ -1003,7 +1036,7 @@ class ComChat {
             this.cleanupBgFilterResources();
             // Canvas が使えない場合は CSS filter をローカル表示に適用
             if (localVideoEl) localVideoEl.style.filter = this.getCSSFilter(type);
-            this.showStatus('フィルターを適用しました', 'connected');
+            this.showStatus('フィルターを適用しました（自分の画面のみ）', 'connected');
         }
     }
 
@@ -1052,6 +1085,8 @@ class ComChat {
         this.confirmJoinBtn.disabled = false;
 
         this.videoGrid.innerHTML = '';
+        this.objectURLs.forEach(url => URL.revokeObjectURL(url));
+        this.objectURLs = [];
         this.chatMessages.innerHTML = '';
         this.isSendingFile = false;
         this.fileAttachBtn.disabled = false;
@@ -1110,7 +1145,10 @@ class ComChat {
     }
 
     generateRoomId() {
-        return Math.random().toString(36).slice(2, 11);
+        const bytes = new Uint8Array(9);
+        crypto.getRandomValues(bytes);
+        const chars = '0123456789abcdefghijklmnopqrstuvwxyz';
+        return Array.from(bytes, b => chars[b % 36]).join('');
     }
 }
 
