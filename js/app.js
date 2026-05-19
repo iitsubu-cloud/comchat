@@ -21,6 +21,7 @@ class ComChat {
         this.bgFilterAnimId = null;
         this.bgSourceVideo = null;
         this.selfieSegmentation = null;
+        this.bgSourceIsOwned = false;
         this.objectURLs = [];
 
         this.initializeUI();
@@ -875,11 +876,13 @@ class ComChat {
     }
 
     cleanupBgFilterResources() {
-        if (this.bgSourceVideo) {
+        if (this.bgSourceVideo && this.bgSourceIsOwned) {
+            // Only destroy bgSourceVideo if we created it (not when it's localVideoEl)
             this.bgSourceVideo.srcObject = null;
             this.bgSourceVideo.remove();
-            this.bgSourceVideo = null;
         }
+        this.bgSourceVideo = null;
+        this.bgSourceIsOwned = false;
         if (this.selfieSegmentation) {
             this.selfieSegmentation.close();
             this.selfieSegmentation = null;
@@ -923,82 +926,60 @@ class ComChat {
         }
 
         if (wasActive) {
-            // フィルター種類だけ変更
-            if (localVideoEl && !this.bgFilterStream) {
-                // CSS-only モード（Safari 17以前など ctx.filter 未対応環境）
-                localVideoEl.style.filter = this.getCSSFilter(type);
-            }
-            // Canvas モード: ループが getCSSFilter を動的参照するため操作不要
+            // Filter type changed while already active: update CSS preview and let canvas loop pick up new type
+            if (localVideoEl) localVideoEl.style.filter = this.getCSSFilter(type);
             return;
         }
 
-        // 初回起動
+        // First activation
         this.bgFilterBtn.classList.add('active');
 
         try {
-            // 1. bgSourceVideo を body に 2px×2px で直接追加
-            //    コンテナの overflow:hidden や opacity:0 だと Safari がデコードをスロットリングする。
-            //    実際にレンダリングされる最小サイズ（2px×2px, z-index:-9999）を確保してスロットリングを防ぐ。
-            this.bgSourceVideo = document.createElement('video');
-            this.bgSourceVideo.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;pointer-events:none;z-index:-9999;opacity:0.01;object-fit:cover;';
-            this.bgSourceVideo.muted = true;
-            this.bgSourceVideo.autoplay = true;
-            this.bgSourceVideo.playsInline = true;
-            this.bgSourceVideo.srcObject = this.localStream;
-            document.body.appendChild(this.bgSourceVideo);
-            await this.bgSourceVideo.play().catch(() => {});
-            if (this.bgSourceVideo.readyState < 2) {
+            if (!localVideoEl) throw new Error('local video not found');
+
+            // Wait for video frame data (should be instant since it's already playing)
+            if (localVideoEl.readyState < 2 || !localVideoEl.videoWidth) {
                 await new Promise(r => {
-                    this.bgSourceVideo.addEventListener('loadeddata', r, { once: true });
-                    setTimeout(r, 5000);
+                    localVideoEl.addEventListener('loadeddata', r, { once: true });
+                    setTimeout(r, 3000);
                 });
             }
+            if (!localVideoEl.videoWidth) throw new Error('video not ready');
 
-            // requestVideoFrameCallback でフレームが実際に届いているか確認
-            // videoWidth > 0 だけでは Safari スロットリング時のフレーム未生成を検知できない
-            const frameAvailable = await new Promise(resolve => {
-                if (typeof this.bgSourceVideo.requestVideoFrameCallback === 'function') {
-                    // 2 秒以内に最初のフレームが届いたら true、届かなければ false
-                    this.bgSourceVideo.requestVideoFrameCallback(() => resolve(true));
-                    setTimeout(() => resolve(false), 2000);
-                } else {
-                    // API 非対応ブラウザは videoWidth で代替
-                    resolve(this.bgSourceVideo.videoWidth > 0);
-                }
-            });
+            // Use the already-visible local video element directly as canvas draw source.
+            // A small hidden video element gets throttled by Safari; the visible one does not.
+            this.bgSourceVideo = localVideoEl;
+            this.bgSourceIsOwned = false; // We don't own this element — cleanupBgFilterResources must not remove it
 
-            if (!frameAvailable) {
-                // フレームなし（スロットリング等）→ CSS-only モードにフォールバック
-                // Canvas に黒フレームを送信しないためリソースを解放
-                this.cleanupBgFilterResources();
-                if (localVideoEl) localVideoEl.style.filter = this.getCSSFilter(type);
-                this.showStatus('フィルターを適用しました（自分の画面のみ）', 'connected');
-                return;
-            }
+            const srcW = localVideoEl.videoWidth;
+            const srcH = localVideoEl.videoHeight;
 
-            const srcW = this.bgSourceVideo.videoWidth;
-            const srcH = this.bgSourceVideo.videoHeight;
-
-            // 2. Canvas 作成と ctx.filter サポートチェック
-            //    ctx.filter は Safari 17以前で未対応（Safari 18.0 で追加）
+            // Canvas setup + ctx.filter support check (unsupported on Safari < 18)
             this.bgFilterCanvas = document.createElement('canvas');
             this.bgFilterCanvas.width = srcW;
             this.bgFilterCanvas.height = srcH;
             this.bgFilterCtx = this.bgFilterCanvas.getContext('2d');
 
             if (!('filter' in this.bgFilterCtx)) {
-                // Canvas フィルター未対応: CSS filter をローカル表示に直接適用
-                this.cleanupBgFilterResources();
-                if (localVideoEl) localVideoEl.style.filter = this.getCSSFilter(type);
+                // Canvas filter unsupported: CSS-only local preview, no remote filtering
+                this.bgSourceVideo = null;
+                this.bgSourceIsOwned = false;
+                this.bgFilterCanvas = null;
+                this.bgFilterCtx = null;
+                localVideoEl.style.filter = this.getCSSFilter(type);
                 this.showStatus('フィルターを適用しました（自分の画面のみ）', 'connected');
                 return;
             }
 
-            // 3. captureStream で Canvas トラックを取得
             this.bgFilterStream = this.bgFilterCanvas.captureStream(30);
             if (!this.bgFilterStream.getVideoTracks().length) throw new Error('captureStream no tracks');
 
-            // 4. MediaPipe を試みる。失敗時は CSS フィルターループで代替
+            // Apply CSS filter to local preview.
+            // ctx.drawImage captures raw pixels (not CSS-filtered output), so we apply
+            // the canvas filter in the draw loop AND CSS filter visually for the local tile.
+            localVideoEl.style.filter = this.getCSSFilter(type);
+
+            // Try MediaPipe for person segmentation; fall back to whole-frame CSS filter loop
             let usedMediaPipe = false;
             try {
                 this.showStatus('背景フィルターを読み込み中...', 'connecting');
@@ -1011,15 +992,7 @@ class ComChat {
                 this.startCSSFilterLoop();
             }
 
-            // 5. ローカル表示を Canvas ストリームに切り替え
-            //    Safari は srcObject 変更後に明示的な play() が必要
-            if (localVideoEl) {
-                localVideoEl.srcObject = this.bgFilterStream;
-                localVideoEl.style.filter = '';
-                localVideoEl.play().catch(() => {});
-            }
-
-            // 6. リモートピアにも Canvas トラックを送信
+            // Send canvas-filtered track to remote peers (local srcObject unchanged)
             if (!this.currentScreenStream) {
                 const canvasTrack = this.bgFilterStream.getVideoTracks()[0];
                 this.calls.forEach(call => {
@@ -1028,7 +1001,7 @@ class ComChat {
                 });
             }
 
-            this.showStatus(usedMediaPipe ? '背景フィルターを適用しました' : 'フィルターを適用しました（自分の画面のみ）', 'connected');
+            this.showStatus(usedMediaPipe ? '背景フィルターを適用しました' : 'フィルターを適用しました', 'connected');
 
         } catch (err) {
             console.warn('Canvas pipeline failed, using CSS-only mode:', err);
