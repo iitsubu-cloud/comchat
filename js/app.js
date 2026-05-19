@@ -28,6 +28,8 @@ class ComChat {
         this.blurCtx = null;
         this.personCanvas = null;
         this.personCtx = null;
+        this.smallCanvas = null;
+        this.smallCtx = null;
         this.bgSourceIsOwned = false;
         this.imageCapture = null;
         this.objectURLs = [];
@@ -841,10 +843,19 @@ class ComChat {
         this.maskCtx.putImageData(this.maskImageData, 0, 0);
         result.close?.();
 
-        // Step 1: pre-render blurred background to blurCanvas (simple source-over + filter)
-        this.blurCtx.filter = this.getCSSFilter(this.bgFilterType);
-        this.blurCtx.drawImage(sourceImage, 0, 0, w, h);
-        this.blurCtx.filter = 'none';
+        // Step 1: pre-render background effect to blurCanvas
+        if (this.bgFilterType === 'blur' && this.smallCtx) {
+            // Scale-down/up technique: Safari's ctx.filter='blur()' on drawImage is broken,
+            // but bilinear upscaling from a tiny canvas creates equivalent blur effect
+            this.smallCtx.drawImage(sourceImage, 0, 0, this.smallCanvas.width, this.smallCanvas.height);
+            this.blurCtx.imageSmoothingEnabled = true;
+            this.blurCtx.imageSmoothingQuality = 'high';
+            this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
+        } else {
+            this.blurCtx.filter = this.getCSSFilter(this.bgFilterType);
+            this.blurCtx.drawImage(sourceImage, 0, 0, w, h);
+            this.blurCtx.filter = 'none';
+        }
 
         // Step 2: extract sharp person pixels into personCanvas
         this.personCtx.globalCompositeOperation = 'copy';
@@ -942,6 +953,8 @@ class ComChat {
         this.blurCtx = null;
         this.personCanvas = null;
         this.personCtx = null;
+        this.smallCanvas = null;
+        this.smallCtx = null;
         this.bgFilterCanvas = null;
         this.bgFilterCtx = null;
         this.bgFilterStream = null;
@@ -1069,6 +1082,11 @@ class ComChat {
                 this.personCanvas.width = srcW;
                 this.personCanvas.height = srcH;
                 this.personCtx = this.personCanvas.getContext('2d');
+                // smallCanvas: 1/8 scale used for scale-down/up blur (Safari ctx.filter blur is broken)
+                this.smallCanvas = document.createElement('canvas');
+                this.smallCanvas.width = Math.max(1, Math.floor(srcW / 8));
+                this.smallCanvas.height = Math.max(1, Math.floor(srcH / 8));
+                this.smallCtx = this.smallCanvas.getContext('2d');
                 this.startBgFilterLoop();
                 usedMediaPipe = true;
             } catch (mpErr) {
