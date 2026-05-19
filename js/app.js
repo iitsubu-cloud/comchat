@@ -884,8 +884,12 @@ class ComChat {
                     }
                     bitmap.close();
                 } else if (this.bgSourceVideo?.readyState >= 2 && this.imageSegmenter) {
-                    const result = this.imageSegmenter.segmentForVideo(this.bgSourceVideo, performance.now());
-                    this.onSegmentationResults(result, this.bgSourceVideo);
+                    // createImageBitmap captures the actual full-resolution frame regardless of
+                    // the video element's CSS display size (Safari throttles tiny video elements)
+                    const bitmap = await createImageBitmap(this.bgSourceVideo);
+                    const result = this.imageSegmenter.segmentForVideo(bitmap, performance.now());
+                    this.onSegmentationResults(result, bitmap);
+                    bitmap.close();
                 }
             } catch (e) {}
             this.bgFilterAnimId = requestAnimationFrame(loop);
@@ -1029,7 +1033,8 @@ class ComChat {
             // Strategy 2: Hidden bgSourceVideo fallback (for browsers without ImageCapture)
             if (!this.imageCapture) {
                 this.bgSourceVideo = document.createElement('video');
-                this.bgSourceVideo.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;pointer-events:none;z-index:-9999;opacity:0.01;object-fit:cover;';
+                // Off-screen at reasonable size — Safari throttles/misrenders tiny video elements
+                this.bgSourceVideo.style.cssText = 'position:fixed;left:-10000px;top:0;width:320px;height:240px;pointer-events:none;';
                 this.bgSourceVideo.muted = true;
                 this.bgSourceVideo.autoplay = true;
                 this.bgSourceVideo.playsInline = true;
@@ -1082,10 +1087,10 @@ class ComChat {
                 this.personCanvas.width = srcW;
                 this.personCanvas.height = srcH;
                 this.personCtx = this.personCanvas.getContext('2d');
-                // smallCanvas: 1/8 scale used for scale-down/up blur (Safari ctx.filter blur is broken)
+                // smallCanvas: 1/32 scale for aggressive blur (Safari ctx.filter blur is broken)
                 this.smallCanvas = document.createElement('canvas');
-                this.smallCanvas.width = Math.max(1, Math.floor(srcW / 8));
-                this.smallCanvas.height = Math.max(1, Math.floor(srcH / 8));
+                this.smallCanvas.width = Math.max(1, Math.floor(srcW / 32));
+                this.smallCanvas.height = Math.max(1, Math.floor(srcH / 32));
                 this.smallCtx = this.smallCanvas.getContext('2d');
                 this.startBgFilterLoop();
                 usedMediaPipe = true;
