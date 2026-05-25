@@ -34,6 +34,9 @@ class ComChat {
         this.bgSourceIsOwned = false;
         this.imageCapture = null;
         this.objectURLs = [];
+        this.currentRemoteSharerId = null;
+        this.currentScreenStream = null;
+        this.cameraVideoTrack = null;
 
         this.initializeUI();
     }
@@ -288,6 +291,9 @@ class ComChat {
         conn.on('open', () => {
             conn.send({ type: 'user-join', username: this.username });
             conn.send({ type: 'mute-state', muted: this.isAudioMuted });
+            if (this.currentScreenStream) {
+                conn.send({ type: 'screen-share-start', peerId: this.peer.id, username: this.username });
+            }
             if (this.isHost) {
                 const existingPeers = Array.from(this.connections.keys())
                     .filter(id => id !== conn.peer)
@@ -333,8 +339,12 @@ class ComChat {
                 this.screenShareVideo.classList.remove('hidden');
                 this.screenSharePlaceholder.classList.add('hidden');
             }
-            // 背景フィルターが有効なら新しいピアにもフィルタートラックを送る
-            if (this.bgFilterType !== 'none' && this.bgFilterStream && !this.currentScreenStream) {
+            // 遅れて参加したピアへ、現在送信中の正しいビデオトラックを送る
+            if (this.currentScreenStream) {
+                const screenTrack = this.currentScreenStream.getVideoTracks()[0];
+                const sender = call.peerConnection.getSenders().find(s => s.track?.kind === 'video');
+                if (sender && screenTrack) sender.replaceTrack(screenTrack).catch(() => {});
+            } else if (this.bgFilterType !== 'none' && this.bgFilterStream) {
                 const canvasTrack = this.bgFilterStream.getVideoTracks()[0];
                 const sender = call.peerConnection.getSenders().find(s => s.track?.kind === 'video');
                 if (sender && canvasTrack) sender.replaceTrack(canvasTrack).catch(() => {});
@@ -1015,7 +1025,6 @@ class ComChat {
         if (wasActive) {
             // CSS-only fallback: no canvas, update style.filter directly
             if (!this.bgFilterCanvas) {
-                const localVideoEl = document.querySelector('#video-local .video-element');
                 if (localVideoEl) localVideoEl.style.filter = this.getCSSFilter(type);
             }
             // Canvas loop reads bgFilterType dynamically — no other action needed.
