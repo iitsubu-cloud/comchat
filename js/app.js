@@ -856,13 +856,14 @@ class ComChat {
         if (!this.prevConfidenceData || this.prevConfidenceData.length !== maskData.length) {
             this.prevConfidenceData = new Float32Array(maskData);
         }
-        // Temporal smoothing: exponential moving average stabilises boundary jitter
-        const ALPHA = 0.2;
-        // Sigmoid LUT maps smoothed confidence → alpha with a soft S-curve.
-        // Unlike hard LOW/HIGH thresholds, sigmoid has no abrupt cutoffs, so boundary
-        // pixels never snap between 0 and 255 — flickering is dramatically reduced.
+        // Adaptive temporal smoothing:
+        // - Large change (diff > 80): person is moving → high alpha tracks motion quickly
+        // - Small change (diff ≤ 80): boundary noise → low alpha suppresses flicker heavily
+        // This eliminates both motion lag AND boundary flicker simultaneously.
         for (let i = 0; i < maskData.length; i++) {
-            this.prevConfidenceData[i] = ALPHA * maskData[i] + (1 - ALPHA) * this.prevConfidenceData[i];
+            const diff = Math.abs(maskData[i] - this.prevConfidenceData[i]);
+            const alpha = diff > 80 ? 0.5 : 0.15;
+            this.prevConfidenceData[i] = alpha * maskData[i] + (1 - alpha) * this.prevConfidenceData[i];
             this.maskImageData.data[i * 4 + 3] = this.sigmoidLUT[this.prevConfidenceData[i] | 0];
         }
         this.maskCtx.putImageData(this.maskImageData, 0, 0);
@@ -879,11 +880,16 @@ class ComChat {
 
         // Step 1: pre-render background effect to blurCanvas
         if (this.bgFilterType === 'blur' && this.smallCtx) {
-            // Scale-down/up technique: Safari's ctx.filter='blur()' on drawImage is broken,
-            // but bilinear upscaling from a tiny canvas creates equivalent blur effect
-            this.smallCtx.drawImage(sourceImage, 0, 0, this.smallCanvas.width, this.smallCanvas.height);
+            // Two-pass scale-down/up: each pass applies a low-pass filter.
+            // Double pass creates a wider, smoother blur kernel than single pass.
+            const sw = this.smallCanvas.width, sh = this.smallCanvas.height;
             this.blurCtx.imageSmoothingEnabled = true;
             this.blurCtx.imageSmoothingQuality = 'high';
+            // Pass 1: source → 1/8 → blurCanvas
+            this.smallCtx.drawImage(sourceImage, 0, 0, sw, sh);
+            this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
+            // Pass 2: blurCanvas → 1/8 → blurCanvas (reads before it writes — safe)
+            this.smallCtx.drawImage(this.blurCanvas, 0, 0, sw, sh);
             this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
         } else {
             this.blurCtx.filter = this.getCSSFilter(this.bgFilterType);
@@ -1130,8 +1136,8 @@ class ComChat {
                 this.smallCanvas.height = Math.max(1, Math.floor(srcH / 8));
                 this.smallCtx = this.smallCanvas.getContext('2d');
                 this.maskSmallCanvas = document.createElement('canvas');
-                this.maskSmallCanvas.width = Math.max(1, Math.floor(srcW / 8));
-                this.maskSmallCanvas.height = Math.max(1, Math.floor(srcH / 8));
+                this.maskSmallCanvas.width = Math.max(1, Math.floor(srcW / 16));
+                this.maskSmallCanvas.height = Math.max(1, Math.floor(srcH / 16));
                 this.maskSmallCtx = this.maskSmallCanvas.getContext('2d');
                 // Sigmoid LUT: maps 0-255 confidence to 0-255 alpha via smooth S-curve.
                 // Centered at 128, steepness=0.06 creates a ~80-pixel-wide transition zone.
