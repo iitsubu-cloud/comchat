@@ -30,6 +30,8 @@ class ComChat {
         this.personCtx = null;
         this.smallCanvas = null;
         this.smallCtx = null;
+        this.maskSmallCanvas = null;
+        this.maskSmallCtx = null;
         this.prevConfidenceData = null;
         this.bgSourceIsOwned = false;
         this.imageCapture = null;
@@ -826,7 +828,7 @@ class ComChat {
                 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
             );
         }
-        const modelAssetPath = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite';
+        const modelAssetPath = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/latest/selfie_segmenter_landscape.tflite';
         const segOpts = { runningMode: 'VIDEO', outputCategoryMask: false, outputConfidenceMasks: true };
         try {
             this.imageSegmenter = await ImageSegmenter.createFromOptions(window._mpVision, {
@@ -846,7 +848,7 @@ class ComChat {
         const w = this.bgFilterCanvas.width;
         const h = this.bgFilterCanvas.height;
         const confidence = result.confidenceMasks?.[0];
-        if (!confidence || !this.maskImageData || !this.blurCtx || !this.personCtx) { result.close?.(); return; }
+        if (!confidence || !this.maskImageData || !this.blurCtx || !this.personCtx || !this.maskSmallCtx) { result.close?.(); return; }
         const maskData = confidence.getAsUint8Array();
         // Temporal smoothing: exponential moving average with previous frame's mask
         // reduces boundary flickering when the person moves
@@ -854,7 +856,7 @@ class ComChat {
             this.prevConfidenceData = new Float32Array(maskData);
         }
         // Temporal smoothing: exponential moving average stabilises boundary jitter
-        const ALPHA = 0.35;
+        const ALPHA = 0.25;
         // Contrast thresholds: pixels clearly in/out of person are clamped to 0 or 255,
         // only the narrow boundary zone (80–180) gets a soft linear blend.
         // This keeps the outline sharp while suppressing flicker at the edges.
@@ -866,6 +868,14 @@ class ComChat {
         }
         this.maskCtx.putImageData(this.maskImageData, 0, 0);
         result.close?.();
+
+        // Scale-down/up smoothing softens jagged mask boundaries and reduces block noise.
+        // Same technique as the blur canvas — bilinear upscaling from 1/4 scale acts as a low-pass filter.
+        this.maskSmallCtx.drawImage(this.maskCanvas, 0, 0, this.maskSmallCanvas.width, this.maskSmallCanvas.height);
+        this.maskCtx.imageSmoothingEnabled = true;
+        this.maskCtx.imageSmoothingQuality = 'high';
+        this.maskCtx.clearRect(0, 0, w, h);
+        this.maskCtx.drawImage(this.maskSmallCanvas, 0, 0, w, h);
 
         // Step 1: pre-render background effect to blurCanvas
         if (this.bgFilterType === 'blur' && this.smallCtx) {
@@ -983,6 +993,8 @@ class ComChat {
         this.personCtx = null;
         this.smallCanvas = null;
         this.smallCtx = null;
+        this.maskSmallCanvas = null;
+        this.maskSmallCtx = null;
         this.prevConfidenceData = null;
         this.bgFilterCanvas = null;
         this.bgFilterCtx = null;
@@ -1116,6 +1128,10 @@ class ComChat {
                 this.smallCanvas.width = Math.max(1, Math.floor(srcW / 8));
                 this.smallCanvas.height = Math.max(1, Math.floor(srcH / 8));
                 this.smallCtx = this.smallCanvas.getContext('2d');
+                this.maskSmallCanvas = document.createElement('canvas');
+                this.maskSmallCanvas.width = Math.max(1, Math.floor(srcW / 4));
+                this.maskSmallCanvas.height = Math.max(1, Math.floor(srcH / 4));
+                this.maskSmallCtx = this.maskSmallCanvas.getContext('2d');
                 this.startBgFilterLoop();
                 usedMediaPipe = true;
             } catch (mpErr) {
