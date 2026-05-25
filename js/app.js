@@ -32,6 +32,7 @@ class ComChat {
         this.smallCtx = null;
         this.maskSmallCanvas = null;
         this.maskSmallCtx = null;
+        this.sigmoidLUT = null;
         this.prevConfidenceData = null;
         this.bgSourceIsOwned = false;
         this.imageCapture = null;
@@ -856,15 +857,13 @@ class ComChat {
             this.prevConfidenceData = new Float32Array(maskData);
         }
         // Temporal smoothing: exponential moving average stabilises boundary jitter
-        const ALPHA = 0.25;
-        // Contrast thresholds: pixels clearly in/out of person are clamped to 0 or 255,
-        // only the narrow boundary zone (80–180) gets a soft linear blend.
-        // This keeps the outline sharp while suppressing flicker at the edges.
-        const LOW = 80, HIGH = 180, RANGE = HIGH - LOW;
+        const ALPHA = 0.2;
+        // Sigmoid LUT maps smoothed confidence → alpha with a soft S-curve.
+        // Unlike hard LOW/HIGH thresholds, sigmoid has no abrupt cutoffs, so boundary
+        // pixels never snap between 0 and 255 — flickering is dramatically reduced.
         for (let i = 0; i < maskData.length; i++) {
             this.prevConfidenceData[i] = ALPHA * maskData[i] + (1 - ALPHA) * this.prevConfidenceData[i];
-            const s = this.prevConfidenceData[i];
-            this.maskImageData.data[i * 4 + 3] = s <= LOW ? 0 : s >= HIGH ? 255 : (s - LOW) / RANGE * 255;
+            this.maskImageData.data[i * 4 + 3] = this.sigmoidLUT[this.prevConfidenceData[i] | 0];
         }
         this.maskCtx.putImageData(this.maskImageData, 0, 0);
         result.close?.();
@@ -996,6 +995,7 @@ class ComChat {
         this.smallCtx = null;
         this.maskSmallCanvas = null;
         this.maskSmallCtx = null;
+        this.sigmoidLUT = null;
         this.prevConfidenceData = null;
         this.bgFilterCanvas = null;
         this.bgFilterCtx = null;
@@ -1130,9 +1130,15 @@ class ComChat {
                 this.smallCanvas.height = Math.max(1, Math.floor(srcH / 8));
                 this.smallCtx = this.smallCanvas.getContext('2d');
                 this.maskSmallCanvas = document.createElement('canvas');
-                this.maskSmallCanvas.width = Math.max(1, Math.floor(srcW / 4));
-                this.maskSmallCanvas.height = Math.max(1, Math.floor(srcH / 4));
+                this.maskSmallCanvas.width = Math.max(1, Math.floor(srcW / 8));
+                this.maskSmallCanvas.height = Math.max(1, Math.floor(srcH / 8));
                 this.maskSmallCtx = this.maskSmallCanvas.getContext('2d');
+                // Sigmoid LUT: maps 0-255 confidence to 0-255 alpha via smooth S-curve.
+                // Centered at 128, steepness=0.06 creates a ~80-pixel-wide transition zone.
+                this.sigmoidLUT = new Uint8Array(256);
+                for (let j = 0; j < 256; j++) {
+                    this.sigmoidLUT[j] = Math.round(255 / (1 + Math.exp(-0.06 * (j - 128))));
+                }
                 this.startBgFilterLoop();
                 usedMediaPipe = true;
             } catch (mpErr) {
