@@ -871,6 +871,7 @@ class ComChat {
 
         // Scale-down/up smoothing softens jagged mask boundaries and reduces block noise.
         // Same technique as the blur canvas — bilinear upscaling from 1/4 scale acts as a low-pass filter.
+        this.maskSmallCtx.clearRect(0, 0, this.maskSmallCanvas.width, this.maskSmallCanvas.height);
         this.maskSmallCtx.drawImage(this.maskCanvas, 0, 0, this.maskSmallCanvas.width, this.maskSmallCanvas.height);
         this.maskCtx.imageSmoothingEnabled = true;
         this.maskCtx.imageSmoothingQuality = 'high';
