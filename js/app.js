@@ -829,10 +829,7 @@ class ComChat {
                 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
             );
         }
-        // selfie_multiclass_256x256: 256x256 resolution with 6-class output
-        // (background, hair, body-skin, face-skin, clothes, accessories)
-        // Higher effective resolution than selfie_segmenter_landscape (256x144)
-        const modelAssetPath = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite';
+        const modelAssetPath = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/latest/selfie_segmenter_landscape.tflite';
         const segOpts = { runningMode: 'VIDEO', outputCategoryMask: false, outputConfidenceMasks: true };
         try {
             this.imageSegmenter = await ImageSegmenter.createFromOptions(window._mpVision, {
@@ -851,20 +848,17 @@ class ComChat {
         const ctx = this.bgFilterCtx;
         const w = this.bgFilterCanvas.width;
         const h = this.bgFilterCanvas.height;
-        // confidenceMasks[0] = background confidence. Person confidence = 255 - bg.
-        // Summing all 6 classes equals 255, so 255-bg = sum of person-part confidences.
-        const bgMask = result.confidenceMasks?.[0];
-        if (!bgMask || !this.maskImageData || !this.blurCtx || !this.personCtx || !this.maskSmallCtx) { result.close?.(); return; }
-        const maskData = bgMask.getAsUint8Array();
-        // Temporal smoothing with adaptive alpha (same as before)
+        // selfie_segmenter_landscape: confidenceMasks[0] = person confidence (high = person, no inversion needed)
+        const confidence = result.confidenceMasks?.[0];
+        if (!confidence || !this.maskImageData || !this.blurCtx || !this.personCtx || !this.maskSmallCtx) { result.close?.(); return; }
+        const maskData = confidence.getAsUint8Array();
         if (!this.prevConfidenceData || this.prevConfidenceData.length !== maskData.length) {
-            this.prevConfidenceData = new Float32Array(maskData.length);
+            this.prevConfidenceData = new Float32Array(maskData);
         }
         for (let i = 0; i < maskData.length; i++) {
-            const personConf = 255 - maskData[i]; // invert: high = person
-            const diff = Math.abs(personConf - this.prevConfidenceData[i]);
+            const diff = Math.abs(maskData[i] - this.prevConfidenceData[i]);
             const alpha = diff > 80 ? 0.5 : 0.15;
-            this.prevConfidenceData[i] = alpha * personConf + (1 - alpha) * this.prevConfidenceData[i];
+            this.prevConfidenceData[i] = alpha * maskData[i] + (1 - alpha) * this.prevConfidenceData[i];
             this.maskImageData.data[i * 4 + 3] = this.sigmoidLUT[this.prevConfidenceData[i] | 0];
         }
         this.maskCtx.putImageData(this.maskImageData, 0, 0);
