@@ -879,14 +879,24 @@ class ComChat {
         this.maskCtx.drawImage(this.maskSmallCanvas, 0, 0, w, h);
 
         // Step 1: pre-render background effect to blurCanvas
-        if (this.bgFilterType === 'blur' && this.smallCtx) {
-            const sw = this.smallCanvas.width, sh = this.smallCanvas.height;
-            this.blurCtx.imageSmoothingEnabled = true;
-            this.blurCtx.imageSmoothingQuality = 'high';
-            this.smallCtx.drawImage(sourceImage, 0, 0, sw, sh);
-            this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
-            this.smallCtx.drawImage(this.blurCanvas, 0, 0, sw, sh);
-            this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
+        if (this.bgFilterType === 'blur') {
+            if (this._useCtxFilterBlur) {
+                // True Gaussian blur via ctx.filter — no block artifacts.
+                // Draw 30px beyond canvas edges to prevent edge-darkening from blur cutoff.
+                const b = 30;
+                this.blurCtx.filter = 'blur(20px)';
+                this.blurCtx.drawImage(sourceImage, -b, -b, w + 2 * b, h + 2 * b);
+                this.blurCtx.filter = 'none';
+            } else {
+                // Safari < 18 fallback: scale-down/up approximation
+                const sw = this.smallCanvas.width, sh = this.smallCanvas.height;
+                this.blurCtx.imageSmoothingEnabled = true;
+                this.blurCtx.imageSmoothingQuality = 'high';
+                this.smallCtx.drawImage(sourceImage, 0, 0, sw, sh);
+                this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
+                this.smallCtx.drawImage(this.blurCanvas, 0, 0, sw, sh);
+                this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
+            }
         } else {
             this.blurCtx.filter = this.getCSSFilter(this.bgFilterType);
             this.blurCtx.drawImage(sourceImage, 0, 0, w, h);
@@ -1128,15 +1138,20 @@ class ComChat {
                 this.smallCanvas.width = Math.max(1, Math.floor(srcW / 8));
                 this.smallCanvas.height = Math.max(1, Math.floor(srcH / 8));
                 this.smallCtx = this.smallCanvas.getContext('2d');
+                // 1/4 scale (vs old 1/16) preserves more edge detail while still smoothing model artifacts
                 this.maskSmallCanvas = document.createElement('canvas');
-                this.maskSmallCanvas.width = Math.max(1, Math.floor(srcW / 16));
-                this.maskSmallCanvas.height = Math.max(1, Math.floor(srcH / 16));
+                this.maskSmallCanvas.width = Math.max(1, Math.floor(srcW / 4));
+                this.maskSmallCanvas.height = Math.max(1, Math.floor(srcH / 4));
                 this.maskSmallCtx = this.maskSmallCanvas.getContext('2d');
-                // Sigmoid LUT: confidence → alpha via smooth S-curve (reduces hard edge at threshold)
+                // Sigmoid LUT: steepness 0.09 gives crisper edges than 0.06 without excessive flicker
                 this.sigmoidLUT = new Uint8Array(256);
                 for (let j = 0; j < 256; j++) {
-                    this.sigmoidLUT[j] = Math.round(255 / (1 + Math.exp(-0.06 * (j - 128))));
+                    this.sigmoidLUT[j] = Math.round(255 / (1 + Math.exp(-0.09 * (j - 128))));
                 }
+                // Check Canvas 2D ctx.filter support (not available in Safari < 18)
+                const testCtx = document.createElement('canvas').getContext('2d');
+                testCtx.filter = 'blur(1px)';
+                this._useCtxFilterBlur = testCtx.filter !== 'none' && testCtx.filter !== '';
                 this.startBgFilterLoop();
                 usedMediaPipe = true;
             } catch (mpErr) {
