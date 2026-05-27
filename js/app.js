@@ -888,11 +888,16 @@ class ComChat {
                 this.blurCtx.drawImage(sourceImage, -b, -b, w + 2 * b, h + 2 * b);
                 this.blurCtx.filter = 'none';
             } else {
-                // Safari < 18 fallback: scale-down/up approximation
+                // Safari < 18 fallback: 3-pass 1/4-scale down/up
+                // Each pass box-blurs with ~4px kernel; 3 passes ≈ smooth Gaussian
                 const sw = this.smallCanvas.width, sh = this.smallCanvas.height;
                 this.blurCtx.imageSmoothingEnabled = true;
                 this.blurCtx.imageSmoothingQuality = 'high';
+                this.smallCtx.imageSmoothingEnabled = true;
+                this.smallCtx.imageSmoothingQuality = 'high';
                 this.smallCtx.drawImage(sourceImage, 0, 0, sw, sh);
+                this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
+                this.smallCtx.drawImage(this.blurCanvas, 0, 0, sw, sh);
                 this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
                 this.smallCtx.drawImage(this.blurCanvas, 0, 0, sw, sh);
                 this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
@@ -1134,9 +1139,10 @@ class ComChat {
                 this.personCanvas.width = srcW;
                 this.personCanvas.height = srcH;
                 this.personCtx = this.personCanvas.getContext('2d');
+                // 1/4 scale (vs old 1/8) — fewer block artifacts per pass in Safari fallback
                 this.smallCanvas = document.createElement('canvas');
-                this.smallCanvas.width = Math.max(1, Math.floor(srcW / 8));
-                this.smallCanvas.height = Math.max(1, Math.floor(srcH / 8));
+                this.smallCanvas.width = Math.max(1, Math.floor(srcW / 4));
+                this.smallCanvas.height = Math.max(1, Math.floor(srcH / 4));
                 this.smallCtx = this.smallCanvas.getContext('2d');
                 // 1/4 scale (vs old 1/16) preserves more edge detail while still smoothing model artifacts
                 this.maskSmallCanvas = document.createElement('canvas');
@@ -1148,10 +1154,16 @@ class ComChat {
                 for (let j = 0; j < 256; j++) {
                     this.sigmoidLUT[j] = Math.round(255 / (1 + Math.exp(-0.09 * (j - 128))));
                 }
-                // Check Canvas 2D ctx.filter support (not available in Safari < 18)
-                const testCtx = document.createElement('canvas').getContext('2d');
-                testCtx.filter = 'blur(1px)';
-                this._useCtxFilterBlur = testCtx.filter !== 'none' && testCtx.filter !== '';
+                // Pixel test for ctx.filter support — property-value checks fail in Safari < 18
+                // because the property accepts writes but silently ignores them.
+                // Drawing a blurred shape and checking pixel spread is the only reliable method.
+                const bTestCanvas = document.createElement('canvas');
+                bTestCanvas.width = bTestCanvas.height = 8;
+                const bTestCtx = bTestCanvas.getContext('2d');
+                bTestCtx.filter = 'blur(2px)';
+                bTestCtx.fillStyle = '#fff';
+                bTestCtx.fillRect(3, 3, 2, 2);
+                this._useCtxFilterBlur = bTestCtx.getImageData(0, 0, 1, 1).data[3] > 0;
                 this.startBgFilterLoop();
                 usedMediaPipe = true;
             } catch (mpErr) {
