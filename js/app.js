@@ -865,12 +865,27 @@ class ComChat {
         result.close?.();
 
         // Scale-down/up smoothing softens jagged mask boundaries
-        this.maskSmallCtx.clearRect(0, 0, this.maskSmallCanvas.width, this.maskSmallCanvas.height);
-        this.maskSmallCtx.drawImage(this.maskCanvas, 0, 0, this.maskSmallCanvas.width, this.maskSmallCanvas.height);
+        const mw = this.maskSmallCanvas.width, mh = this.maskSmallCanvas.height;
+        this.maskSmallCtx.imageSmoothingEnabled = true;
+        this.maskSmallCtx.imageSmoothingQuality = 'high';
+        this.maskSmallCtx.clearRect(0, 0, mw, mh);
+        this.maskSmallCtx.drawImage(this.maskCanvas, 0, 0, mw, mh);
         this.maskCtx.imageSmoothingEnabled = true;
         this.maskCtx.imageSmoothingQuality = 'high';
         this.maskCtx.clearRect(0, 0, w, h);
-        this.maskCtx.drawImage(this.maskSmallCanvas, 0, 0, w, h);
+        if (this._useCtxFilterBlur) {
+            // blur(6px) during upscale → natural feathered edge at person boundary
+            this.maskCtx.filter = 'blur(6px)';
+            this.maskCtx.drawImage(this.maskSmallCanvas, 0, 0, w, h);
+            this.maskCtx.filter = 'none';
+        } else {
+            // Two-pass scale for wider edge softening in Safari fallback
+            this.maskCtx.drawImage(this.maskSmallCanvas, 0, 0, w, h);
+            this.maskSmallCtx.clearRect(0, 0, mw, mh);
+            this.maskSmallCtx.drawImage(this.maskCanvas, 0, 0, mw, mh);
+            this.maskCtx.clearRect(0, 0, w, h);
+            this.maskCtx.drawImage(this.maskSmallCanvas, 0, 0, w, h);
+        }
 
         // Step 1: pre-render background effect to blurCanvas
         if (this.bgFilterType === 'blur') {
