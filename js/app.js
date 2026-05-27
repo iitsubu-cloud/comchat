@@ -20,7 +20,13 @@ class ComChat {
         this.bgFilterStream = null;
         this.bgFilterAnimId = null;
         this.bgSourceVideo = null;
-        this.imageSegmenter = null;
+        this.tfSegmenter = null;
+        this.tfInferenceRunning = false;
+        this.inferCanvas = null;
+        this.inferCtx = null;
+        this.inferMaskCanvas = null;
+        this.inferMaskCtx = null;
+        this.inferMaskData = null;
         this.maskCanvas = null;
         this.maskCtx = null;
         this.maskImageData = null;
@@ -32,7 +38,6 @@ class ComChat {
         this.smallCtx = null;
         this.maskSmallCanvas = null;
         this.maskSmallCtx = null;
-        this.sigmoidLUT = null;
         this.prevConfidenceData = null;
         this.bgSourceIsOwned = false;
         this.imageCapture = null;
@@ -679,7 +684,7 @@ class ComChat {
                 this.bgFilterCtx.fillStyle = '#000';
                 this.bgFilterCtx.fillRect(0, 0, this.bgFilterCanvas.width, this.bgFilterCanvas.height);
             } else {
-                this.imageSegmenter ? this.startBgFilterLoop() : this.startCSSFilterLoop();
+                this.tfSegmenter ? this.startBgFilterLoop() : this.startCSSFilterLoop();
             }
         }
     }
@@ -815,62 +820,80 @@ class ComChat {
         return map[type] || 'none';
     }
 
-    async loadMediaPipe() {
-        if (window._mpTasks) return;
-        window._mpTasks = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
+    async loadTransformers() {
+        if (window._transformersLib) return;
+        window._transformersLib = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3/dist/transformers.min.js');
     }
 
-    async initSelfieSegmentation() {
-        if (this.imageSegmenter) return;
-        await this.loadMediaPipe();
-        const { FilesetResolver, ImageSegmenter } = window._mpTasks;
-        if (!window._mpVision) {
-            window._mpVision = await FilesetResolver.forVisionTasks(
-                'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
-            );
-        }
-        const modelAssetPath = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/latest/selfie_segmenter_landscape.tflite';
-        const segOpts = { runningMode: 'VIDEO', outputCategoryMask: false, outputConfidenceMasks: true };
+    async initTransformersSegmentation() {
+        if (this.tfSegmenter) return;
+        await this.loadTransformers();
+        const { pipeline } = window._transformersLib;
+        const model = 'Xenova/segformer-b0-finetuned-ade-512-512';
         try {
-            this.imageSegmenter = await ImageSegmenter.createFromOptions(window._mpVision, {
-                ...segOpts, baseOptions: { modelAssetPath, delegate: 'GPU' },
-            });
+            this.tfSegmenter = await pipeline('image-segmentation', model, { device: 'webgpu' });
         } catch {
-            // GPU delegate fails in Safari due to WebGL incompatibility — fall back to CPU
-            this.imageSegmenter = await ImageSegmenter.createFromOptions(window._mpVision, {
-                ...segOpts, baseOptions: { modelAssetPath, delegate: 'CPU' },
-            });
+            // WebGPU unavailable — fall back to WebAssembly
+            this.tfSegmenter = await pipeline('image-segmentation', model, { device: 'wasm' });
         }
     }
 
-    onSegmentationResults(result, sourceImage) {
-        if (this.bgFilterType === 'none' || !this.bgFilterCtx) { result.close?.(); return; }
+    updateMaskFromTransformers(tfMask) {
+        if (!this.maskImageData || !this.maskCtx) return;
+        const w = this.bgFilterCanvas.width;
+        const h = this.bgFilterCanvas.height;
+        const mw = tfMask.width, mh = tfMask.height;
+
+        // Allocate inference-resolution mask canvas once (or if size changes)
+        if (!this.inferMaskCanvas || this.inferMaskCanvas.width !== mw || this.inferMaskCanvas.height !== mh) {
+            this.inferMaskCanvas = document.createElement('canvas');
+            this.inferMaskCanvas.width = mw;
+            this.inferMaskCanvas.height = mh;
+            this.inferMaskCtx = this.inferMaskCanvas.getContext('2d');
+            this.inferMaskData = this.inferMaskCtx.createImageData(mw, mh);
+            for (let i = 0; i < mw * mh; i++) {
+                this.inferMaskData.data[i * 4] = 255;
+                this.inferMaskData.data[i * 4 + 1] = 255;
+                this.inferMaskData.data[i * 4 + 2] = 255;
+            }
+        }
+
+        // Write binary mask to inferMaskData alpha channel
+        // tfMask.data values are 0/1 (float) or 0/255 (uint8) depending on Transformers.js version
+        for (let i = 0; i < mw * mh; i++) {
+            const v = tfMask.data[i];
+            this.inferMaskData.data[i * 4 + 3] = v > 1 ? v : Math.round(v * 255);
+        }
+        this.inferMaskCtx.putImageData(this.inferMaskData, 0, 0);
+
+        // Upscale to full canvas size — bilinear interpolation creates smooth edge transitions
+        this.maskCtx.imageSmoothingEnabled = true;
+        this.maskCtx.imageSmoothingQuality = 'high';
+        this.maskCtx.clearRect(0, 0, w, h);
+        this.maskCtx.drawImage(this.inferMaskCanvas, 0, 0, w, h);
+
+        // Apply adaptive temporal smoothing to reduce flicker at boundaries
+        const upscaled = this.maskCtx.getImageData(0, 0, w, h);
+        if (!this.prevConfidenceData || this.prevConfidenceData.length !== w * h) {
+            this.prevConfidenceData = new Float32Array(w * h);
+        }
+        for (let i = 0; i < w * h; i++) {
+            const newVal = upscaled.data[i * 4 + 3];
+            const diff = Math.abs(newVal - this.prevConfidenceData[i]);
+            const alpha = diff > 80 ? 0.5 : 0.15;
+            this.prevConfidenceData[i] = alpha * newVal + (1 - alpha) * this.prevConfidenceData[i];
+            this.maskImageData.data[i * 4 + 3] = Math.round(this.prevConfidenceData[i]);
+        }
+        this.maskCtx.putImageData(this.maskImageData, 0, 0);
+    }
+
+    compositeFrame(sourceImage) {
+        if (!this.bgFilterCtx || !this.maskCtx || !this.blurCtx || !this.personCtx || !this.maskSmallCtx) return;
         const ctx = this.bgFilterCtx;
         const w = this.bgFilterCanvas.width;
         const h = this.bgFilterCanvas.height;
-        const confidence = result.confidenceMasks?.[0];
-        if (!confidence || !this.maskImageData || !this.blurCtx || !this.personCtx || !this.maskSmallCtx) { result.close?.(); return; }
-        const maskData = confidence.getAsUint8Array();
-        // Temporal smoothing: exponential moving average with previous frame's mask
-        // reduces boundary flickering when the person moves
-        if (!this.prevConfidenceData || this.prevConfidenceData.length !== maskData.length) {
-            this.prevConfidenceData = new Float32Array(maskData);
-        }
-        // Adaptive temporal smoothing:
-        // - Large change (diff > 80): person is moving → high alpha tracks motion quickly
-        // - Small change (diff ≤ 80): boundary noise → low alpha suppresses flicker heavily
-        // This eliminates both motion lag AND boundary flicker simultaneously.
-        for (let i = 0; i < maskData.length; i++) {
-            const diff = Math.abs(maskData[i] - this.prevConfidenceData[i]);
-            const alpha = diff > 80 ? 0.5 : 0.15;
-            this.prevConfidenceData[i] = alpha * maskData[i] + (1 - alpha) * this.prevConfidenceData[i];
-            this.maskImageData.data[i * 4 + 3] = this.sigmoidLUT[this.prevConfidenceData[i] | 0];
-        }
-        this.maskCtx.putImageData(this.maskImageData, 0, 0);
-        result.close?.();
 
-        // Scale-down/up smoothing softens jagged mask boundaries and reduces block noise.
-        // Same technique as the blur canvas — bilinear upscaling from 1/4 scale acts as a low-pass filter.
+        // Additional edge smoothing via 1/16 scale-down/up pass
         this.maskSmallCtx.clearRect(0, 0, this.maskSmallCanvas.width, this.maskSmallCanvas.height);
         this.maskSmallCtx.drawImage(this.maskCanvas, 0, 0, this.maskSmallCanvas.width, this.maskSmallCanvas.height);
         this.maskCtx.imageSmoothingEnabled = true;
@@ -880,15 +903,11 @@ class ComChat {
 
         // Step 1: pre-render background effect to blurCanvas
         if (this.bgFilterType === 'blur' && this.smallCtx) {
-            // Two-pass scale-down/up: each pass applies a low-pass filter.
-            // Double pass creates a wider, smoother blur kernel than single pass.
             const sw = this.smallCanvas.width, sh = this.smallCanvas.height;
             this.blurCtx.imageSmoothingEnabled = true;
             this.blurCtx.imageSmoothingQuality = 'high';
-            // Pass 1: source → 1/8 → blurCanvas
             this.smallCtx.drawImage(sourceImage, 0, 0, sw, sh);
             this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
-            // Pass 2: blurCanvas → 1/8 → blurCanvas (reads before it writes — safe)
             this.smallCtx.drawImage(this.blurCanvas, 0, 0, sw, sh);
             this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
         } else {
@@ -904,7 +923,7 @@ class ComChat {
         this.personCtx.drawImage(sourceImage, 0, 0, w, h);
         this.personCtx.globalCompositeOperation = 'source-over';
 
-        // Step 3: composite — blurred background then sharp person on top (only source-over)
+        // Step 3: composite — blurred background then sharp person on top
         ctx.globalCompositeOperation = 'copy';
         ctx.drawImage(this.blurCanvas, 0, 0, w, h);
         ctx.globalCompositeOperation = 'source-over';
@@ -913,24 +932,38 @@ class ComChat {
     }
 
     startBgFilterLoop() {
+        this.tfInferenceRunning = false;
+
         const loop = async () => {
             if (this.bgFilterType === 'none') return;
             try {
+                let frame;
                 if (this.imageCapture) {
-                    const bitmap = await this.imageCapture.grabFrame();
-                    if (this.imageSegmenter && this.bgFilterType !== 'none') {
-                        const result = this.imageSegmenter.segmentForVideo(bitmap, performance.now());
-                        this.onSegmentationResults(result, bitmap);
-                    }
-                    bitmap.close();
-                } else if (this.bgSourceVideo?.readyState >= 2 && this.imageSegmenter) {
-                    // createImageBitmap captures the actual full-resolution frame regardless of
-                    // the video element's CSS display size (Safari throttles tiny video elements)
-                    const bitmap = await createImageBitmap(this.bgSourceVideo);
-                    const result = this.imageSegmenter.segmentForVideo(bitmap, performance.now());
-                    this.onSegmentationResults(result, bitmap);
-                    bitmap.close();
+                    frame = await this.imageCapture.grabFrame();
+                } else if (this.bgSourceVideo?.readyState >= 2) {
+                    frame = await createImageBitmap(this.bgSourceVideo);
                 }
+                if (!frame) { this.bgFilterAnimId = requestAnimationFrame(loop); return; }
+
+                // Fire async inference when idle — draws current frame to inferCanvas so
+                // inference doesn't hold a reference to the grabbed ImageBitmap
+                if (this.tfSegmenter && !this.tfInferenceRunning && this.inferCtx) {
+                    this.tfInferenceRunning = true;
+                    this.inferCtx.drawImage(frame, 0, 0, this.inferCanvas.width, this.inferCanvas.height);
+                    this.tfSegmenter(this.inferCanvas).then(results => {
+                        const personSeg = results.find(r => r.label.toLowerCase().includes('person'));
+                        if (personSeg?.mask && this.maskImageData) this.updateMaskFromTransformers(personSeg.mask);
+                        this.tfInferenceRunning = false;
+                    }).catch(() => { this.tfInferenceRunning = false; });
+                }
+
+                // Composite using the latest mask; fall back to raw draw while waiting for first mask
+                if (this.blurCtx && this.maskImageData && this.prevConfidenceData) {
+                    this.compositeFrame(frame);
+                } else {
+                    this.bgFilterCtx?.drawImage(frame, 0, 0, this.bgFilterCanvas.width, this.bgFilterCanvas.height);
+                }
+                frame.close?.();
             } catch (e) {}
             this.bgFilterAnimId = requestAnimationFrame(loop);
         };
@@ -986,10 +1019,13 @@ class ComChat {
         this.bgSourceVideo = null;
         this.bgSourceIsOwned = false;
         this.imageCapture = null;
-        if (this.imageSegmenter) {
-            this.imageSegmenter.close();
-            this.imageSegmenter = null;
-        }
+        this.tfSegmenter = null;
+        this.tfInferenceRunning = false;
+        this.inferCanvas = null;
+        this.inferCtx = null;
+        this.inferMaskCanvas = null;
+        this.inferMaskCtx = null;
+        this.inferMaskData = null;
         this.maskCanvas = null;
         this.maskCtx = null;
         this.maskImageData = null;
@@ -1001,7 +1037,6 @@ class ComChat {
         this.smallCtx = null;
         this.maskSmallCanvas = null;
         this.maskSmallCtx = null;
-        this.sigmoidLUT = null;
         this.prevConfidenceData = null;
         this.bgFilterCanvas = null;
         this.bgFilterCtx = null;
@@ -1106,12 +1141,12 @@ class ComChat {
             this.bgFilterStream = this.bgFilterCanvas.captureStream(30);
             if (!this.bgFilterStream.getVideoTracks().length) throw new Error('captureStream no tracks');
 
-            // Try MediaPipe for background segmentation (person stays sharp)
-            let usedMediaPipe = false;
+            // Try Transformers.js for background segmentation (person stays sharp)
+            let usedSegmentation = false;
             try {
-                this.showStatus('背景フィルターを読み込み中...', 'connecting');
-                await this.initSelfieSegmentation();
-                // マスク合成用キャンバスを事前確保（フレームごとの alloc を避ける）
+                this.showStatus('AIモデルを読み込み中... (初回のみ時間がかかります)', 'connecting');
+                await this.initTransformersSegmentation();
+                // Pre-allocate compositing canvases (avoids per-frame allocation)
                 this.maskCanvas = document.createElement('canvas');
                 this.maskCanvas.width = srcW;
                 this.maskCanvas.height = srcH;
@@ -1130,7 +1165,6 @@ class ComChat {
                 this.personCanvas.width = srcW;
                 this.personCanvas.height = srcH;
                 this.personCtx = this.personCanvas.getContext('2d');
-                // smallCanvas: 1/8 scale for smooth blur (Safari ctx.filter blur is broken)
                 this.smallCanvas = document.createElement('canvas');
                 this.smallCanvas.width = Math.max(1, Math.floor(srcW / 8));
                 this.smallCanvas.height = Math.max(1, Math.floor(srcH / 8));
@@ -1139,17 +1173,19 @@ class ComChat {
                 this.maskSmallCanvas.width = Math.max(1, Math.floor(srcW / 16));
                 this.maskSmallCanvas.height = Math.max(1, Math.floor(srcH / 16));
                 this.maskSmallCtx = this.maskSmallCanvas.getContext('2d');
-                // Sigmoid LUT: maps 0-255 confidence to 0-255 alpha via smooth S-curve.
-                // Centered at 128, steepness=0.06 creates a ~80-pixel-wide transition zone.
-                this.sigmoidLUT = new Uint8Array(256);
-                for (let j = 0; j < 256; j++) {
-                    this.sigmoidLUT[j] = Math.round(255 / (1 + Math.exp(-0.06 * (j - 128))));
-                }
+                // Inference canvas: capped at 512px on longest side to match model's training resolution
+                const inferMaxDim = 512;
+                const inferW = srcW >= srcH ? Math.min(srcW, inferMaxDim) : Math.round(Math.min(srcH, inferMaxDim) * srcW / srcH);
+                const inferH = srcH > srcW ? Math.min(srcH, inferMaxDim) : Math.round(Math.min(srcW, inferMaxDim) * srcH / srcW);
+                this.inferCanvas = document.createElement('canvas');
+                this.inferCanvas.width = inferW;
+                this.inferCanvas.height = inferH;
+                this.inferCtx = this.inferCanvas.getContext('2d');
                 this.startBgFilterLoop();
-                usedMediaPipe = true;
-            } catch (mpErr) {
-                console.warn('MediaPipe unavailable, falling back to CSS filter:', mpErr);
-                if (this.imageSegmenter) { this.imageSegmenter.close(); this.imageSegmenter = null; }
+                usedSegmentation = true;
+            } catch (tfErr) {
+                console.warn('Transformers.js unavailable, falling back to CSS filter:', tfErr);
+                this.tfSegmenter = null;
                 this.startCSSFilterLoop();
             }
 
@@ -1169,7 +1205,7 @@ class ComChat {
                 });
             }
 
-            this.showStatus(usedMediaPipe ? '背景フィルターを適用しました' : 'フィルターを適用しました', 'connected');
+            this.showStatus(usedSegmentation ? '背景フィルターを適用しました' : 'フィルターを適用しました', 'connected');
 
         } catch (err) {
             console.warn('Filter setup failed, using CSS-only mode:', err);
