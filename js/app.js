@@ -83,9 +83,7 @@ class ComChat {
         this.usernameConfirmBtn.addEventListener('click', () => this.confirmEditUsername());
         this.usernameEditInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') this.confirmEditUsername();
-        });
-        this.usernameEditInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') this.exitUsernameEdit();
+            else if (e.key === 'Escape') this.exitUsernameEdit();
         });
 
         this.createRoomBtn.addEventListener('click', () => this.createRoom());
@@ -357,6 +355,9 @@ class ComChat {
     }
 
     handleCall(call) {
+        // Close any existing call from the same peer before replacing
+        const existing = this.calls.get(call.peer);
+        if (existing) existing.close();
         this.calls.set(call.peer, call);
 
         call.on('stream', (remoteStream) => {
