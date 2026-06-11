@@ -669,6 +669,74 @@ body {
     color: white;
 }
 
+.bg-image-panel {
+    position: fixed;
+    background: white;
+    border-radius: 12px;
+    padding: 10px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    z-index: 9000;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    transform: translateX(-50%);
+}
+
+.bg-image-panel.hidden { display: none; }
+
+.bg-preset-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+}
+
+.bg-preset {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    cursor: pointer;
+    border-radius: 6px;
+    padding: 4px;
+    transition: background 0.15s;
+}
+
+.bg-preset:hover { background: #f0f2ff; }
+
+.bg-preset.active {
+    background: #f0f2ff;
+    outline: 2px solid #667eea;
+    outline-offset: -2px;
+}
+
+.bg-preset canvas {
+    border-radius: 4px;
+    display: block;
+    border: 1px solid rgba(0,0,0,0.1);
+}
+
+.bg-preset span {
+    font-size: 0.72em;
+    color: #666;
+    white-space: nowrap;
+}
+
+.bg-upload-btn {
+    background: #f0f2ff;
+    border: 1px solid #d0d4f0;
+    color: #667eea;
+    border-radius: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 0.84em;
+    font-weight: 500;
+    text-align: center;
+    transition: background 0.15s;
+    width: 100%;
+}
+
+.bg-upload-btn:hover { background: #e0e4ff; }
+
 /* Responsive design */
 @media (max-width: 768px) {
     .btn-group {
