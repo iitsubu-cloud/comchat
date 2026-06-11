@@ -81,7 +81,7 @@ class ComChat {
         this.usernameConfirmBtn = document.getElementById('username-confirm-btn');
         this.editUsernameBtn.addEventListener('click', () => this.startEditUsername());
         this.usernameConfirmBtn.addEventListener('click', () => this.confirmEditUsername());
-        this.usernameEditInput.addEventListener('keypress', (e) => {
+        this.usernameEditInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') this.confirmEditUsername();
         });
         this.usernameEditInput.addEventListener('keydown', (e) => {
@@ -91,11 +91,11 @@ class ComChat {
         this.createRoomBtn.addEventListener('click', () => this.createRoom());
         this.joinRoomBtn.addEventListener('click', () => this.showJoinInput());
         this.confirmJoinBtn.addEventListener('click', () => this.joinRoom());
-        this.joinRoomIdInput.addEventListener('keypress', (e) => {
+        this.joinRoomIdInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') this.joinRoom();
         });
         this.chatSendBtn.addEventListener('click', () => this.sendMessage());
-        this.chatInput.addEventListener('keypress', (e) => {
+        this.chatInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') this.sendMessage();
         });
         this.hangupModal = document.getElementById('hangup-modal');
@@ -167,6 +167,10 @@ class ComChat {
             this.showStatus('ルームを作成しました。ルームIDを友達に共有してください', 'connected');
 
         } catch (error) {
+            if (this.localStream) {
+                this.localStream.getTracks().forEach(t => t.stop());
+                this.localStream = null;
+            }
             if (this.peer) { this.peer.destroy(); this.peer = null; }
             this.isHost = false;
             this.roomId = null;
@@ -201,6 +205,10 @@ class ComChat {
             this.updateRoomInfo();
 
         } catch (error) {
+            if (this.localStream) {
+                this.localStream.getTracks().forEach(t => t.stop());
+                this.localStream = null;
+            }
             if (this.peer) { this.peer.destroy(); this.peer = null; }
             this.roomId = null;
             this.confirmJoinBtn.disabled = false;
@@ -281,6 +289,11 @@ class ComChat {
             conn.close();
             return;
         }
+        // Reject duplicate connections from the same peer
+        if (this.connections.has(conn.peer)) {
+            conn.close();
+            return;
+        }
 
         this.connections.set(conn.peer, conn);
 
@@ -320,12 +333,25 @@ class ComChat {
             if (this.currentRemoteSharerId === conn.peer) {
                 this.exitRemotePresenterMode();
             }
+            // Clean up any pending file transfers from this peer
+            for (const [id, transfer] of this.receivingFiles.entries()) {
+                if (transfer.senderId === conn.peer) {
+                    transfer.progress.statusEl.textContent = '転送中断';
+                    transfer.progress.barInner.style.background = '#dc3545';
+                    this.receivingFiles.delete(id);
+                }
+            }
             if (!this.peer) return; // hangup済みなら何もしない
             this.updateRoomInfo();
         });
     }
 
     handleIncomingCall(call) {
+        // Reject calls from unknown peers when at capacity
+        if (!this.connections.has(call.peer) && this.connections.size >= 5) {
+            call.close();
+            return;
+        }
         call.answer(this.localStream);
         this.handleCall(call);
     }
@@ -399,7 +425,7 @@ class ComChat {
             case 'file-meta': {
                 const senderName = this.usernames.get(senderId) || senderId;
                 const progress = this.createFileProgress(senderName, data.name, '受信中');
-                this.receivingFiles.set(data.id, { meta: data, chunks: [], received: 0, progress });
+                this.receivingFiles.set(data.id, { meta: data, chunks: [], received: 0, progress, senderId });
                 break;
             }
             case 'file-chunk':
