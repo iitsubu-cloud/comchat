@@ -923,14 +923,19 @@ class ComChat {
                 this.blurCtx.drawImage(sourceImage, -b, -b, w + 2 * b, h + 2 * b);
                 this.blurCtx.filter = 'none';
             } else {
-                // Safari < 18 fallback: 3-pass 1/4-scale down/up
-                // Each pass box-blurs with ~4px kernel; 3 passes ≈ smooth Gaussian
+                // Safari fallback: 5-pass 1/2-scale down/up
+                // 1/2 scale → 2×2 blocks (vs old 4×4) eliminates visible pixelation
+                // 5 passes ≈ equivalent blur radius to old 3-pass 1/4-scale
                 const sw = this.smallCanvas.width, sh = this.smallCanvas.height;
                 this.blurCtx.imageSmoothingEnabled = true;
                 this.blurCtx.imageSmoothingQuality = 'high';
                 this.smallCtx.imageSmoothingEnabled = true;
                 this.smallCtx.imageSmoothingQuality = 'high';
                 this.smallCtx.drawImage(sourceImage, 0, 0, sw, sh);
+                this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
+                this.smallCtx.drawImage(this.blurCanvas, 0, 0, sw, sh);
+                this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
+                this.smallCtx.drawImage(this.blurCanvas, 0, 0, sw, sh);
                 this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
                 this.smallCtx.drawImage(this.blurCanvas, 0, 0, sw, sh);
                 this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
@@ -1174,10 +1179,10 @@ class ComChat {
                 this.personCanvas.width = srcW;
                 this.personCanvas.height = srcH;
                 this.personCtx = this.personCanvas.getContext('2d');
-                // 1/4 scale (vs old 1/8) — fewer block artifacts per pass in Safari fallback
+                // 1/2 scale — 2×2 block size vs old 1/4 (4×4), gives smoother Gaussian approximation
                 this.smallCanvas = document.createElement('canvas');
-                this.smallCanvas.width = Math.max(1, Math.floor(srcW / 4));
-                this.smallCanvas.height = Math.max(1, Math.floor(srcH / 4));
+                this.smallCanvas.width = Math.max(1, Math.floor(srcW / 2));
+                this.smallCanvas.height = Math.max(1, Math.floor(srcH / 2));
                 this.smallCtx = this.smallCanvas.getContext('2d');
                 // 1/4 scale (vs old 1/16) preserves more edge detail while still smoothing model artifacts
                 this.maskSmallCanvas = document.createElement('canvas');
