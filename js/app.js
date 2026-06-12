@@ -904,98 +904,38 @@ class ComChat {
         this.bgImagePanel.classList.remove('hidden');
     }
 
+    _presetUrl(name) {
+        const map = {
+            'white-accent': 'images/bg-room.jpg',
+            'blue-gradient': 'images/bg-flowers.jpg',
+            'green-nature':  'images/bg-resort.jpg',
+        };
+        return map[name] || '';
+    }
+
     drawPresetThumbnail(canvas, name) {
-        const ctx = canvas.getContext('2d');
-        const w = canvas.width, h = canvas.height;
-        if (name === 'white-accent') {
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, w, h);
-            ctx.beginPath();
-            ctx.arc(w * 0.82, h * 0.88, w * 0.28, 0, Math.PI * 2);
-            ctx.fillStyle = 'rgba(0,188,212,0.22)';
-            ctx.fill();
-            ctx.beginPath();
-            ctx.arc(w * 0.95, h * 0.6, w * 0.18, 0, Math.PI * 2);
-            ctx.fillStyle = 'rgba(103,58,183,0.15)';
-            ctx.fill();
-            const g = ctx.createLinearGradient(0, 0, 0, h);
-            g.addColorStop(0, '#00bcd4');
-            g.addColorStop(1, '#9c27b0');
-            ctx.fillStyle = g;
-            ctx.fillRect(0, 0, w * 0.07, h);
-        } else if (name === 'blue-gradient') {
-            const g = ctx.createLinearGradient(0, 0, w, h);
-            g.addColorStop(0, '#1e3a5f');
-            g.addColorStop(1, '#4a90d9');
-            ctx.fillStyle = g;
-            ctx.fillRect(0, 0, w, h);
-        } else if (name === 'green-nature') {
-            const g = ctx.createLinearGradient(0, 0, 0, h);
-            g.addColorStop(0, '#1a4731');
-            g.addColorStop(1, '#4caf7d');
-            ctx.fillStyle = g;
-            ctx.fillRect(0, 0, w, h);
-            ctx.fillStyle = 'rgba(0,0,0,0.2)';
-            for (let x = 4; x < w; x += w / 4) {
-                const th = h * 0.45;
-                ctx.fillRect(x + 2, h - th, 4, th);
-                ctx.beginPath();
-                ctx.arc(x + 4, h - th - h * 0.15, 7, 0, Math.PI * 2);
-                ctx.fill();
-            }
-        }
+        const img = new Image();
+        img.onload = () => {
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width, h = canvas.height;
+            const r = img.naturalWidth / img.naturalHeight;
+            const tr = w / h;
+            let sx = 0, sy = 0, sw = img.naturalWidth, sh = img.naturalHeight;
+            if (r > tr) { sw = sh * tr; sx = (img.naturalWidth - sw) / 2; }
+            else        { sh = sw / tr; sy = (img.naturalHeight - sh) / 2; }
+            ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
+        };
+        img.src = this._presetUrl(name);
     }
 
     async generatePresetBitmap(name) {
         if (this.bgPresets[name]) return this.bgPresets[name];
-        const canvas = document.createElement('canvas');
-        canvas.width = 1280; canvas.height = 720;
-        const ctx = canvas.getContext('2d');
-        if (name === 'white-accent') {
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, 1280, 720);
-            const circles = [
-                { x: 1100, y: 650, r: 300, color: 'rgba(0,188,212,0.18)' },
-                { x: 1260, y: 490, r: 200, color: 'rgba(103,58,183,0.12)' },
-                { x: 960,  y: 710, r: 160, color: 'rgba(76,175,80,0.12)' },
-            ];
-            for (const c of circles) {
-                ctx.beginPath();
-                ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
-                ctx.fillStyle = c.color;
-                ctx.fill();
-            }
-            const g = ctx.createLinearGradient(0, 0, 0, 720);
-            g.addColorStop(0, '#00bcd4');
-            g.addColorStop(1, '#9c27b0');
-            ctx.fillStyle = g;
-            ctx.fillRect(0, 0, 10, 720);
-        } else if (name === 'blue-gradient') {
-            const g = ctx.createLinearGradient(0, 0, 1280, 720);
-            g.addColorStop(0, '#1e3a5f');
-            g.addColorStop(0.5, '#2563a8');
-            g.addColorStop(1, '#4a90d9');
-            ctx.fillStyle = g;
-            ctx.fillRect(0, 0, 1280, 720);
-            ctx.fillStyle = 'rgba(255,255,255,0.03)';
-            for (let i = 0; i < 5; i++) ctx.fillRect(0, i * 144, 1280, 55);
-        } else if (name === 'green-nature') {
-            const g = ctx.createLinearGradient(0, 0, 0, 720);
-            g.addColorStop(0, '#1a4731');
-            g.addColorStop(0.6, '#2d7a4f');
-            g.addColorStop(1, '#4caf7d');
-            ctx.fillStyle = g;
-            ctx.fillRect(0, 0, 1280, 720);
-            ctx.fillStyle = 'rgba(0,0,0,0.18)';
-            for (let x = 0; x < 1280; x += 80) {
-                const th = 150 + Math.sin(x * 0.05) * 50;
-                ctx.fillRect(x + 30, 720 - th, 20, th);
-                ctx.beginPath();
-                ctx.arc(x + 40, 720 - th - 55, 40, 0, Math.PI * 2);
-                ctx.fill();
-            }
-        }
-        const bitmap = await createImageBitmap(canvas);
+        const bitmap = await new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => createImageBitmap(img).then(resolve).catch(reject);
+            img.onerror = reject;
+            img.src = this._presetUrl(name);
+        });
         this.bgPresets[name] = bitmap;
         return bitmap;
     }
