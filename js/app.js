@@ -1056,8 +1056,8 @@ class ComChat {
             if (this._useCtxFilterBlur) {
                 // True Gaussian blur via ctx.filter — no block artifacts.
                 // Draw 30px beyond canvas edges to prevent edge-darkening from blur cutoff.
-                const b = 50;
-                this.blurCtx.filter = 'blur(35px)';
+                const b = 70;
+                this.blurCtx.filter = 'blur(60px)';
                 this.blurCtx.drawImage(sourceImage, -b, -b, w + 2 * b, h + 2 * b);
                 this.blurCtx.filter = 'none';
             } else {
