@@ -1056,8 +1056,8 @@ class ComChat {
             if (this._useCtxFilterBlur) {
                 // True Gaussian blur via ctx.filter — no block artifacts.
                 // Draw 30px beyond canvas edges to prevent edge-darkening from blur cutoff.
-                const b = 40;
-                this.blurCtx.filter = 'blur(25px)';
+                const b = 50;
+                this.blurCtx.filter = 'blur(35px)';
                 this.blurCtx.drawImage(sourceImage, -b, -b, w + 2 * b, h + 2 * b);
                 this.blurCtx.filter = 'none';
             } else {
@@ -1068,6 +1068,8 @@ class ComChat {
                 this.smallCtx.imageSmoothingEnabled = true;
                 this.smallCtx.imageSmoothingQuality = 'high';
                 this.smallCtx.drawImage(sourceImage, 0, 0, sw, sh);
+                this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
+                this.smallCtx.drawImage(this.blurCanvas, 0, 0, sw, sh);
                 this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
                 this.smallCtx.drawImage(this.blurCanvas, 0, 0, sw, sh);
                 this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
