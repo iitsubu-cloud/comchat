@@ -121,6 +121,7 @@ class ComChat {
         this.filterPanel = document.getElementById('filter-panel');
         this.bgFilterBtn.addEventListener('click', (e) => {
             e.stopPropagation();
+            if (this.bgImagePanel) this.bgImagePanel.classList.add('hidden');
             const isHidden = this.filterPanel.classList.contains('hidden');
             if (!isHidden) { this.filterPanel.classList.add('hidden'); return; }
             const rect = this.bgFilterBtn.getBoundingClientRect();
@@ -865,7 +866,11 @@ class ComChat {
             el.addEventListener('click', async () => {
                 this.bgImagePanel.querySelectorAll('.bg-preset').forEach(p => p.classList.remove('active'));
                 el.classList.add('active');
-                this.bgImage = await this.generatePresetBitmap(name);
+                const newBitmap = await this.generatePresetBitmap(name);
+                if (this.bgImage && !Object.values(this.bgPresets).includes(this.bgImage)) {
+                    this.bgImage.close();
+                }
+                this.bgImage = newBitmap;
                 this.bgImagePanel.classList.add('hidden');
                 this.applyBgFilter('image');
             });
@@ -882,7 +887,9 @@ class ComChat {
                 const dataURL = await this.resizeImageToDataURL(file);
                 try { localStorage.setItem('comchat_bg_image', dataURL); } catch {}
                 this.bgImagePanel.querySelectorAll('.bg-preset').forEach(p => p.classList.remove('active'));
-                this.bgImage = await this.loadBgFromDataURL(dataURL);
+                const newBitmap = await this.loadBgFromDataURL(dataURL);
+                this.bgImage?.close();
+                this.bgImage = newBitmap;
                 this.bgImagePanel.classList.add('hidden');
                 this.applyBgFilter('image');
             } catch (err) {
@@ -958,7 +965,7 @@ class ComChat {
                 canvas.getContext('2d').drawImage(img, 0, 0, w, h);
                 resolve(canvas.toDataURL('image/jpeg', 0.7));
             };
-            img.onerror = reject;
+            img.onerror = (err) => { URL.revokeObjectURL(url); reject(err); };
             img.src = url;
         });
     }
@@ -1369,8 +1376,17 @@ class ComChat {
             console.warn('Filter setup failed, using CSS-only mode:', err);
             this.stopBgFilterLoop();
             this.cleanupBgFilterResources();
-            if (localVideoEl) localVideoEl.style.filter = this.getCSSFilter(type);
-            this.showStatus('フィルターを適用しました（自分の画面のみ）', 'connected');
+            if (type === 'image') {
+                this.bgFilterType = 'none';
+                this.bgFilterBtn.classList.remove('active');
+                this.filterPanel.querySelectorAll('.filter-option').forEach(el => {
+                    el.classList.toggle('active', el.dataset.filter === 'none');
+                });
+                this.showStatus('背景画像の設定に失敗しました', 'error');
+            } else {
+                if (localVideoEl) localVideoEl.style.filter = this.getCSSFilter(type);
+                this.showStatus('フィルターを適用しました（自分の画面のみ）', 'connected');
+            }
         }
     }
 
