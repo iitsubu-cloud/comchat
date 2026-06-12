@@ -1049,20 +1049,22 @@ class ComChat {
             if (this._useCtxFilterBlur) {
                 // True Gaussian blur via ctx.filter — no block artifacts.
                 // Draw 30px beyond canvas edges to prevent edge-darkening from blur cutoff.
-                const b = 30;
-                this.blurCtx.filter = 'blur(20px)';
+                const b = 60;
+                this.blurCtx.filter = 'blur(40px)';
                 this.blurCtx.drawImage(sourceImage, -b, -b, w + 2 * b, h + 2 * b);
                 this.blurCtx.filter = 'none';
             } else {
-                // Safari fallback: 5-pass 1/2-scale down/up
-                // 1/2 scale → 2×2 blocks (vs old 4×4) eliminates visible pixelation
-                // 5 passes ≈ equivalent blur radius to old 3-pass 1/4-scale
+                // Safari fallback: 8-pass 1/2-scale down/up (stronger blur)
                 const sw = this.smallCanvas.width, sh = this.smallCanvas.height;
                 this.blurCtx.imageSmoothingEnabled = true;
                 this.blurCtx.imageSmoothingQuality = 'high';
                 this.smallCtx.imageSmoothingEnabled = true;
                 this.smallCtx.imageSmoothingQuality = 'high';
                 this.smallCtx.drawImage(sourceImage, 0, 0, sw, sh);
+                this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
+                this.smallCtx.drawImage(this.blurCanvas, 0, 0, sw, sh);
+                this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
+                this.smallCtx.drawImage(this.blurCanvas, 0, 0, sw, sh);
                 this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
                 this.smallCtx.drawImage(this.blurCanvas, 0, 0, sw, sh);
                 this.blurCtx.drawImage(this.smallCanvas, 0, 0, w, h);
