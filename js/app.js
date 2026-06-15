@@ -12,6 +12,7 @@ class ComChat {
         this.username = 'ユーザー';
         this.isAudioMuted = false;
         this.muteStates = new Map();
+        this.cameraStates = new Map();
         this.receivingFiles = new Map();
         this.isConnecting = false;
         this.bgFilterType = 'none';
@@ -368,6 +369,8 @@ class ComChat {
         conn.on('open', () => {
             conn.send({ type: 'user-join', username: this.username });
             conn.send({ type: 'mute-state', muted: this.isAudioMuted });
+            const cameraEnabled = this.localStream?.getVideoTracks()[0]?.enabled ?? true;
+            conn.send({ type: 'camera-state', enabled: cameraEnabled });
             if (this.currentScreenStream) {
                 conn.send({ type: 'screen-share-start', peerId: this.peer.id, username: this.username });
             }
@@ -468,9 +471,10 @@ class ComChat {
                 break;
             case 'user-join': {
                 this.usernames.set(senderId, data.username);
-                // Update label if the video element already exists
                 const labelDiv = document.querySelector(`#video-${senderId} .video-label`);
                 if (labelDiv) labelDiv.textContent = data.username;
+                const centerName = document.querySelector(`#video-${senderId} .video-center-name`);
+                if (centerName) centerName.textContent = data.username;
                 break;
             }
             case 'peer-list':
@@ -485,6 +489,12 @@ class ComChat {
                 this.muteStates.set(senderId, data.muted);
                 this.setMuteIndicator(senderId, data.muted);
                 break;
+            case 'camera-state': {
+                this.cameraStates.set(senderId, data.enabled);
+                const cn = document.querySelector(`#video-${senderId} .video-center-name`);
+                if (cn) cn.style.display = data.enabled ? 'none' : 'block';
+                break;
+            }
             case 'screen-share-start':
                 this.enterRemotePresenterMode(data.peerId, data.username);
                 break;
@@ -549,6 +559,8 @@ class ComChat {
             this.username = newName;
             const localLabel = document.querySelector('#video-local .video-label');
             if (localLabel) localLabel.textContent = newName;
+            const localCenterName = document.querySelector('#video-local .video-center-name');
+            if (localCenterName) localCenterName.textContent = newName;
             this.broadcast({ type: 'user-join', username: newName });
         }
         this.exitUsernameEdit();
@@ -586,9 +598,21 @@ class ComChat {
         if (id === 'local' && this.isAudioMuted) muteIndicator.classList.remove('hidden');
         if (id !== 'local' && this.muteStates.get(id)) muteIndicator.classList.remove('hidden');
 
+        const centerName = document.createElement('div');
+        centerName.className = 'video-center-name';
+        centerName.textContent = label;
+        centerName.style.display = 'none';
+        if (id === 'local') {
+            const vt = this.localStream?.getVideoTracks()[0];
+            if (vt && !vt.enabled) centerName.style.display = 'block';
+        } else if (this.cameraStates.has(id) && !this.cameraStates.get(id)) {
+            centerName.style.display = 'block';
+        }
+
         videoContainer.appendChild(video);
         videoContainer.appendChild(labelDiv);
         videoContainer.appendChild(muteIndicator);
+        videoContainer.appendChild(centerName);
         this.videoGrid.appendChild(videoContainer);
         video.play().catch(() => {});
     }
@@ -777,6 +801,9 @@ class ComChat {
                 this.imageSegmenter ? this.startBgFilterLoop() : this.startCSSFilterLoop();
             }
         }
+        const localCenterName = document.querySelector('#video-local .video-center-name');
+        if (localCenterName) localCenterName.style.display = videoTrack.enabled ? 'none' : 'block';
+        this.broadcast({ type: 'camera-state', enabled: videoTrack.enabled });
     }
 
     async toggleAudio() {
@@ -1722,6 +1749,7 @@ class ComChat {
         this.roomId = null;
         this.isAudioMuted = false;
         this.muteStates.clear();
+        this.cameraStates.clear();
         this.receivingFiles.clear();
         this.currentRemoteSharerId = null;
         this.currentScreenStream = null;
