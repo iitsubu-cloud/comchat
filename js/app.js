@@ -1521,10 +1521,11 @@ class ComChat {
                 this.maskSmallCanvas.width = Math.max(1, Math.floor(srcW / 4));
                 this.maskSmallCanvas.height = Math.max(1, Math.floor(srcH / 4));
                 this.maskSmallCtx = this.maskSmallCanvas.getContext('2d');
-                // Sigmoid LUT: steepness 0.09 gives crisper edges than 0.06 without excessive flicker
+                // Sigmoid LUT: center at 150 (vs 128) to raise person-confidence threshold,
+                // reducing misclassification of nearby objects (e.g. sticks, furniture)
                 this.sigmoidLUT = new Uint8Array(256);
                 for (let j = 0; j < 256; j++) {
-                    this.sigmoidLUT[j] = Math.round(255 / (1 + Math.exp(-0.09 * (j - 128))));
+                    this.sigmoidLUT[j] = Math.round(255 / (1 + Math.exp(-0.09 * (j - 150))));
                 }
                 // Pixel test for ctx.filter support — property-value checks fail in Safari < 18
                 // because the property accepts writes but silently ignores them.
