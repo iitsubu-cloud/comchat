@@ -38,6 +38,7 @@ class ComChat {
         this.imageCapture = null;
         this.bgImage = null;
         this.bgPresets = {};
+        this.bgHistory = [];
         this.bgImagePanel = null;
         this.objectURLs = [];
         this.currentRemoteSharerId = null;
@@ -917,7 +918,7 @@ class ComChat {
             const name = el.dataset.preset;
             this.drawPresetThumbnail(el.querySelector('canvas'), name);
             el.addEventListener('click', async () => {
-                this.bgImagePanel.querySelectorAll('.bg-preset').forEach(p => p.classList.remove('active'));
+                this.clearBgPanelActive();
                 el.classList.add('active');
                 const newBitmap = await this.generatePresetBitmap(name);
                 if (this.bgImage && !Object.values(this.bgPresets).includes(this.bgImage)) {
@@ -938,10 +939,14 @@ class ComChat {
             e.target.value = '';
             try {
                 const dataURL = await this.resizeImageToDataURL(file);
-                try { localStorage.setItem('comchat_bg_image', dataURL); } catch {}
-                this.bgImagePanel.querySelectorAll('.bg-preset').forEach(p => p.classList.remove('active'));
+                this.addToHistory(dataURL);
+                this.renderHistoryThumbnails();
+                // Mark the newly added item (index 0) as active
+                document.querySelector('#bg-history-grid .bg-history-item')?.classList.add('active');
                 const newBitmap = await this.loadBgFromDataURL(dataURL);
-                this.bgImage?.close();
+                if (this.bgImage && !Object.values(this.bgPresets).includes(this.bgImage)) {
+                    this.bgImage.close();
+                }
                 this.bgImage = newBitmap;
                 this.bgImagePanel.classList.add('hidden');
                 this.applyBgFilter('image');
@@ -950,11 +955,103 @@ class ComChat {
             }
         });
 
-        // Restore saved upload from previous session
+        // Load history from localStorage (with migration from old single-key format)
+        this.loadBgHistory();
+        this.renderHistoryThumbnails();
+        // Pre-load the most recent upload as bgImage for quick reuse
+        if (this.bgHistory.length > 0) {
+            this.loadBgFromDataURL(this.bgHistory[0]).then(bm => { this.bgImage = bm; }).catch(() => {});
+        }
+    }
+
+    loadBgHistory() {
         try {
-            const saved = localStorage.getItem('comchat_bg_image');
-            if (saved) this.loadBgFromDataURL(saved).then(bm => { this.bgImage = bm; }).catch(() => {});
+            const saved = localStorage.getItem('comchat_bg_history');
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                this.bgHistory = Array.isArray(parsed) ? parsed.slice(0, 3) : [];
+                return;
+            }
         } catch {}
+        // Migrate from old single-image key
+        try {
+            const old = localStorage.getItem('comchat_bg_image');
+            if (old) {
+                this.bgHistory = [old];
+                try {
+                    localStorage.setItem('comchat_bg_history', JSON.stringify(this.bgHistory));
+                    localStorage.removeItem('comchat_bg_image');
+                } catch {}
+            }
+        } catch {}
+    }
+
+    addToHistory(dataURL) {
+        this.bgHistory = this.bgHistory.filter(d => d !== dataURL);
+        this.bgHistory.unshift(dataURL);
+        this.bgHistory = this.bgHistory.slice(0, 3);
+        try { localStorage.setItem('comchat_bg_history', JSON.stringify(this.bgHistory)); } catch {}
+    }
+
+    renderHistoryThumbnails() {
+        const section = document.getElementById('bg-history-section');
+        const grid = document.getElementById('bg-history-grid');
+        if (!section || !grid) return;
+
+        grid.innerHTML = '';
+
+        if (this.bgHistory.length === 0) {
+            section.classList.add('hidden');
+            return;
+        }
+        section.classList.remove('hidden');
+
+        this.bgHistory.forEach((dataURL, index) => {
+            const item = document.createElement('div');
+            item.className = 'bg-history-item';
+
+            const canvas = document.createElement('canvas');
+            canvas.width = 64;
+            canvas.height = 36;
+
+            const label = document.createElement('span');
+            label.textContent = `履歴${index + 1}`;
+
+            item.appendChild(canvas);
+            item.appendChild(label);
+            grid.appendChild(item);
+
+            // Draw thumbnail (cover crop, same as preset)
+            const img = new Image();
+            img.onload = () => {
+                const ctx = canvas.getContext('2d');
+                const w = 64, h = 36;
+                const r = img.naturalWidth / img.naturalHeight;
+                const tr = w / h;
+                let sx = 0, sy = 0, sw = img.naturalWidth, sh = img.naturalHeight;
+                if (r > tr) { sw = sh * tr; sx = (img.naturalWidth - sw) / 2; }
+                else        { sh = sw / tr; sy = (img.naturalHeight - sh) / 2; }
+                ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
+            };
+            img.src = dataURL;
+
+            item.addEventListener('click', async () => {
+                this.clearBgPanelActive();
+                item.classList.add('active');
+                const newBitmap = await this.loadBgFromDataURL(dataURL);
+                if (this.bgImage && !Object.values(this.bgPresets).includes(this.bgImage)) {
+                    this.bgImage.close();
+                }
+                this.bgImage = newBitmap;
+                this.bgImagePanel.classList.add('hidden');
+                this.applyBgFilter('image');
+            });
+        });
+    }
+
+    clearBgPanelActive() {
+        this.bgImagePanel.querySelectorAll('.bg-preset').forEach(p => p.classList.remove('active'));
+        document.querySelectorAll('.bg-history-item').forEach(i => i.classList.remove('active'));
     }
 
     showBgImagePanel() {

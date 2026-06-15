@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ComChat - 完全無料ビデオ会議</title>
-    <link rel="stylesheet" href="css/style.css?v=13">
+    <link rel="stylesheet" href="css/style.css?v=14">
     <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>">
 </head>
 <body>
@@ -235,6 +235,10 @@
                 <span>リゾート</span>
             </div>
         </div>
+        <div id="bg-history-section" class="bg-history-section hidden">
+            <div class="bg-history-label">最近使った画像</div>
+            <div id="bg-history-grid" class="bg-history-grid"></div>
+        </div>
         <button id="bg-upload-btn" class="bg-upload-btn">アップロード</button>
         <input type="file" id="bg-upload-input" accept="image/*" style="display:none">
     </div>
@@ -260,7 +264,7 @@
 
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
-    <script src="js/app.js?v=55"></script>
+    <script src="js/app.js?v=56"></script>
 
     <script>
         // タブを閉じる/ページ遷移時にリソースだけ解放（UI操作は不要）

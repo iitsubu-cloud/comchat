@@ -737,6 +737,56 @@ body {
 
 .bg-upload-btn:hover { background: #e0e4ff; }
 
+/* 最近使った画像 */
+.bg-history-section {
+    border-top: 1px solid #e9ecef;
+    padding-top: 8px;
+}
+
+.bg-history-label {
+    font-size: 0.70em;
+    color: #aaa;
+    text-align: center;
+    margin-bottom: 4px;
+}
+
+.bg-history-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+}
+
+.bg-history-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    cursor: pointer;
+    border-radius: 6px;
+    padding: 4px;
+    transition: background 0.15s;
+}
+
+.bg-history-item:hover { background: #f0f2ff; }
+
+.bg-history-item.active {
+    background: #f0f2ff;
+    outline: 2px solid #667eea;
+    outline-offset: -2px;
+}
+
+.bg-history-item canvas {
+    border-radius: 4px;
+    display: block;
+    border: 1px solid rgba(0,0,0,0.1);
+}
+
+.bg-history-item span {
+    font-size: 0.70em;
+    color: #888;
+    white-space: nowrap;
+}
+
 /* ===== 参加前設定ダイアログ ===== */
 .precall-dialog {
     position: fixed;
