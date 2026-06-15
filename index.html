@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ComChat - 完全無料ビデオ会議</title>
-    <link rel="stylesheet" href="css/style.css?v=11">
+    <link rel="stylesheet" href="css/style.css?v=12">
     <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>">
 </head>
 <body>
@@ -157,6 +157,61 @@
         </div>
     </div>
 
+    <!-- 参加前設定ダイアログ -->
+    <div id="precall-dialog" class="precall-dialog hidden">
+        <div class="precall-box">
+            <h3 class="precall-title">参加前の設定</h3>
+            <div class="precall-preview-wrap">
+                <video id="precall-preview" class="precall-preview" autoplay playsinline muted></video>
+                <div id="precall-no-camera" class="precall-no-camera">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="1" y1="1" x2="23" y2="23"/>
+                        <path d="M21 21H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h3m3-3h6l2 3h4a2 2 0 0 1 2 2v9.34"/>
+                    </svg>
+                    <span>カメラを起動中...</span>
+                </div>
+            </div>
+            <div class="precall-controls">
+                <div class="ctrl-item">
+                    <button id="precall-video-btn" class="control-btn video" title="カメラ オン/オフ">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <polygon points="23 7 16 12 23 17 23 7"/>
+                            <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+                        </svg>
+                    </button>
+                    <span class="ctrl-label">カメラ</span>
+                </div>
+                <div class="ctrl-item">
+                    <button id="precall-audio-btn" class="control-btn audio" title="マイク オン/オフ">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                            <line x1="12" y1="19" x2="12" y2="23"/>
+                            <line x1="8" y1="23" x2="16" y2="23"/>
+                        </svg>
+                    </button>
+                    <span class="ctrl-label">マイク</span>
+                </div>
+                <div class="ctrl-item">
+                    <button id="precall-filter-btn" class="control-btn filter" title="背景フィルター">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/>
+                            <line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/>
+                            <line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/>
+                            <line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/>
+                            <line x1="17" y1="16" x2="23" y2="16"/>
+                        </svg>
+                    </button>
+                    <span class="ctrl-label">背景</span>
+                </div>
+            </div>
+            <div class="precall-actions">
+                <button id="precall-cancel" class="hangup-modal-btn cancel">キャンセル</button>
+                <button id="precall-confirm" class="hangup-modal-btn confirm">参加する</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 背景フィルターパネル -->
     <div id="filter-panel" class="filter-panel hidden">
         <div class="filter-option active" data-filter="none">なし</div>
@@ -205,7 +260,7 @@
 
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
-    <script src="js/app.js?v=54"></script>
+    <script src="js/app.js?v=55"></script>
 
     <script>
         // タブを閉じる/ページ遷移時にリソースだけ解放（UI操作は不要）

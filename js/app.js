@@ -89,11 +89,18 @@ class ComChat {
             else if (e.key === 'Escape') this.exitUsernameEdit();
         });
 
-        this.createRoomBtn.addEventListener('click', () => this.createRoom());
+        this.createRoomBtn.addEventListener('click', () => this.showPreCallDialog('create'));
         this.joinRoomBtn.addEventListener('click', () => this.showJoinInput());
-        this.confirmJoinBtn.addEventListener('click', () => this.joinRoom());
+        this.confirmJoinBtn.addEventListener('click', () => {
+            const roomId = this.joinRoomIdInput.value.trim();
+            if (!roomId) { this.showStatus('ルームIDを入力してください', 'error'); return; }
+            this.showPreCallDialog('join');
+        });
         this.joinRoomIdInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') this.joinRoom();
+            if (e.key === 'Enter') {
+                const roomId = this.joinRoomIdInput.value.trim();
+                if (roomId) this.showPreCallDialog('join');
+            }
         });
         this.chatSendBtn.addEventListener('click', () => this.sendMessage());
         this.chatInput.addEventListener('keydown', (e) => {
@@ -107,7 +114,11 @@ class ComChat {
         this.hangupConfirmBtn.addEventListener('click', () => { this.hideHangupModal(); this.hangup(); });
         this.hangupCancelBtn.addEventListener('click', () => this.hideHangupModal());
         this.hangupModal.addEventListener('click', (e) => { if (e.target === this.hangupModal) this.hideHangupModal(); });
-        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.hideHangupModal(); });
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            this.hideHangupModal();
+            if (this.precallDialog && !this.precallDialog.classList.contains('hidden')) this.cancelPreCall();
+        });
         this.toggleVideoBtn.addEventListener('click', () => this.toggleVideo());
         this.toggleAudioBtn.addEventListener('click', () => this.toggleAudio());
         this.shareScreenBtn.addEventListener('click', () => this.shareScreen());
@@ -151,6 +162,34 @@ class ComChat {
         this.fileInput.addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (file) { this.sendFile(file); e.target.value = ''; }
+        });
+
+        // Pre-call settings dialog
+        this.precallDialog = document.getElementById('precall-dialog');
+        this.precallPreview = document.getElementById('precall-preview');
+        this.precallNoCamera = document.getElementById('precall-no-camera');
+        this.precallVideoBtn = document.getElementById('precall-video-btn');
+        this.precallAudioBtn = document.getElementById('precall-audio-btn');
+        this.precallFilterBtn = document.getElementById('precall-filter-btn');
+        this.precallConfirmBtn = document.getElementById('precall-confirm');
+        this.precallCancelBtn = document.getElementById('precall-cancel');
+
+        this.precallVideoBtn.addEventListener('click', () => this.precallToggleVideo());
+        this.precallAudioBtn.addEventListener('click', () => this.precallToggleAudio());
+        this.precallFilterBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (this.bgImagePanel) this.bgImagePanel.classList.add('hidden');
+            const isHidden = this.filterPanel.classList.contains('hidden');
+            if (!isHidden) { this.filterPanel.classList.add('hidden'); return; }
+            const rect = this.precallFilterBtn.getBoundingClientRect();
+            this.filterPanel.style.bottom = (window.innerHeight - rect.top + 10) + 'px';
+            this.filterPanel.style.left = (rect.left + rect.width / 2) + 'px';
+            this.filterPanel.classList.remove('hidden');
+        });
+        this.precallConfirmBtn.addEventListener('click', () => this.confirmPreCall());
+        this.precallCancelBtn.addEventListener('click', () => this.cancelPreCall());
+        this.precallDialog.addEventListener('click', (e) => {
+            if (e.target === this.precallDialog) this.cancelPreCall();
         });
     }
 
@@ -272,15 +311,19 @@ class ComChat {
     }
 
     async getUserMedia() {
-        try {
-            this.localStream = await navigator.mediaDevices.getUserMedia({
-                video: true,
-                audio: true
-            });
-            this.addVideoElement('local', this.localStream, this.username);
-        } catch (error) {
-            throw new Error('カメラ/マイクへのアクセスが拒否されました');
+        if (!this.localStream) {
+            try {
+                this.localStream = await navigator.mediaDevices.getUserMedia({
+                    video: true,
+                    audio: true
+                });
+            } catch (error) {
+                throw new Error('カメラ/マイクへのアクセスが拒否されました');
+            }
         }
+        const displayStream = (this.bgFilterType !== 'none' && this.bgFilterStream)
+            ? this.bgFilterStream : this.localStream;
+        this.addVideoElement('local', displayStream, this.username);
     }
 
     async connectToHost(hostId) {
@@ -915,7 +958,9 @@ class ComChat {
     }
 
     showBgImagePanel() {
-        const rect = this.bgFilterBtn.getBoundingClientRect();
+        const refBtn = (this.precallDialog && !this.precallDialog.classList.contains('hidden'))
+            ? this.precallFilterBtn : this.bgFilterBtn;
+        const rect = refBtn.getBoundingClientRect();
         this.bgImagePanel.style.bottom = (window.innerHeight - rect.top + 10) + 'px';
         this.bgImagePanel.style.left = (rect.left + rect.width / 2) + 'px';
         this.bgImagePanel.classList.remove('hidden');
@@ -1229,6 +1274,11 @@ class ComChat {
                     localVideoEl.play().catch(() => {});
                 }
             }
+            // Update pre-call preview
+            if (this.precallDialog && !this.precallDialog.classList.contains('hidden')) {
+                this.precallPreview.srcObject = this.localStream;
+                this.precallPreview.play().catch(() => {});
+            }
             if (!this.currentScreenStream) {
                 const origTrack = this.localStream?.getVideoTracks()[0];
                 if (origTrack) {
@@ -1238,7 +1288,7 @@ class ComChat {
                     });
                 }
             }
-            this.bgFilterBtn.classList.remove('active');
+            this.syncFilterBtnState();
             return;
         }
 
@@ -1252,7 +1302,7 @@ class ComChat {
         }
 
         // First activation
-        this.bgFilterBtn.classList.add('active');
+        this.syncFilterBtnState();
 
         try {
             const videoTrack = this.localStream?.getVideoTracks()[0];
@@ -1376,6 +1426,11 @@ class ComChat {
                 localVideoEl.style.filter = '';
                 localVideoEl.play().catch(() => {});
             }
+            // Update pre-call preview
+            if (this.precallDialog && !this.precallDialog.classList.contains('hidden')) {
+                this.precallPreview.srcObject = this.bgFilterStream;
+                this.precallPreview.play().catch(() => {});
+            }
 
             // Send canvas track to remote peers
             if (!this.currentScreenStream) {
@@ -1394,7 +1449,7 @@ class ComChat {
             this.cleanupBgFilterResources();
             if (type === 'image') {
                 this.bgFilterType = 'none';
-                this.bgFilterBtn.classList.remove('active');
+                this.syncFilterBtnState();
                 this.filterPanel.querySelectorAll('.filter-option').forEach(el => {
                     el.classList.toggle('active', el.dataset.filter === 'none');
                 });
@@ -1404,6 +1459,133 @@ class ComChat {
                 this.showStatus('フィルターを適用しました（自分の画面のみ）', 'connected');
             }
         }
+    }
+
+    syncFilterBtnState() {
+        const isActive = this.bgFilterType !== 'none';
+        this.bgFilterBtn.classList.toggle('active', isActive);
+        if (this.precallFilterBtn) this.precallFilterBtn.classList.toggle('active', isActive);
+    }
+
+    async showPreCallDialog(action) {
+        if (this.isConnecting || this.localStream) return;
+        this.isConnecting = true;
+        this.createRoomBtn.disabled = true;
+        this.joinRoomBtn.disabled = true;
+        this.confirmJoinBtn.disabled = true;
+
+        try {
+            this.localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        } catch (err) {
+            this.showStatus('カメラ/マイクへのアクセスが拒否されました', 'error');
+            this.isConnecting = false;
+            this.createRoomBtn.disabled = false;
+            this.joinRoomBtn.disabled = false;
+            this.confirmJoinBtn.disabled = false;
+            return;
+        }
+        this.isConnecting = false;
+
+        this.precallAction = action;
+        this.precallConfirmBtn.textContent = action === 'create' ? '作成する' : '参加する';
+
+        // Reset button states
+        this.isAudioMuted = false;
+        this.precallVideoBtn.classList.remove('off');
+        this.precallAudioBtn.classList.remove('off');
+        this.precallFilterBtn.classList.remove('active');
+        this.filterPanel.querySelectorAll('.filter-option').forEach(el => {
+            el.classList.toggle('active', el.dataset.filter === 'none');
+        });
+
+        // Show preview (hidden initially until video loads)
+        this.precallPreview.srcObject = this.localStream;
+        this.precallPreview.play().catch(() => {});
+        this.precallPreview.addEventListener('loadeddata', () => {
+            this.precallNoCamera.classList.add('hidden');
+        }, { once: true });
+
+        this.precallDialog.classList.remove('hidden');
+    }
+
+    cancelPreCall() {
+        this.precallDialog.classList.add('hidden');
+        this.filterPanel.classList.add('hidden');
+        if (this.bgImagePanel) this.bgImagePanel.classList.add('hidden');
+
+        // Clean up bg filter
+        this.stopBgFilterLoop();
+        this.cleanupBgFilterResources();
+        this.bgFilterType = 'none';
+        if (this.bgImage && !Object.values(this.bgPresets).includes(this.bgImage)) {
+            this.bgImage.close();
+        }
+        this.bgImage = null;
+        Object.values(this.bgPresets).forEach(bm => bm.close());
+        this.bgPresets = {};
+
+        // Stop preview and release camera
+        this.precallPreview.srcObject = null;
+        if (this.localStream) {
+            this.localStream.getTracks().forEach(t => t.stop());
+            this.localStream = null;
+        }
+
+        this.isAudioMuted = false;
+        this.precallAction = null;
+        this.createRoomBtn.disabled = false;
+        this.joinRoomBtn.disabled = false;
+        this.confirmJoinBtn.disabled = false;
+        this.filterPanel.querySelectorAll('.filter-option').forEach(el => {
+            el.classList.toggle('active', el.dataset.filter === 'none');
+        });
+        this.precallNoCamera.classList.remove('hidden');
+        this.precallNoCamera.querySelector('span').textContent = 'カメラを起動中...';
+    }
+
+    async confirmPreCall() {
+        const action = this.precallAction;
+        this.precallAction = null;
+        this.precallDialog.classList.add('hidden');
+        this.filterPanel.classList.add('hidden');
+        if (this.bgImagePanel) this.bgImagePanel.classList.add('hidden');
+        this.precallPreview.srcObject = null;
+
+        if (action === 'create') {
+            await this.createRoom();
+        } else {
+            await this.joinRoom();
+        }
+    }
+
+    precallToggleVideo() {
+        if (!this.localStream) return;
+        const track = this.localStream.getVideoTracks()[0];
+        if (!track) return;
+        track.enabled = !track.enabled;
+        this.precallVideoBtn.classList.toggle('off', !track.enabled);
+        this.precallNoCamera.classList.toggle('hidden', track.enabled);
+        if (track.enabled) {
+            this.precallNoCamera.querySelector('span').textContent = 'カメラオフ';
+        }
+        if (this.bgFilterType !== 'none' && this.bgFilterCtx && this.bgFilterCanvas) {
+            if (!track.enabled) {
+                this.stopBgFilterLoop();
+                this.bgFilterCtx.fillStyle = '#000';
+                this.bgFilterCtx.fillRect(0, 0, this.bgFilterCanvas.width, this.bgFilterCanvas.height);
+            } else {
+                this.imageSegmenter ? this.startBgFilterLoop() : this.startCSSFilterLoop();
+            }
+        }
+    }
+
+    precallToggleAudio() {
+        if (!this.localStream) return;
+        const track = this.localStream.getAudioTracks()[0];
+        if (!track) return;
+        track.enabled = !track.enabled;
+        this.isAudioMuted = !track.enabled;
+        this.precallAudioBtn.classList.toggle('off', this.isAudioMuted);
     }
 
     hangup() {
@@ -1491,6 +1673,11 @@ class ComChat {
     showCallScreen() {
         this.welcomeScreen.classList.add('hidden');
         this.callScreen.classList.remove('hidden');
+        // Sync button states from pre-call settings
+        this.toggleAudioBtn.classList.toggle('off', this.isAudioMuted);
+        const videoTrack = this.localStream?.getVideoTracks()[0];
+        this.toggleVideoBtn.classList.toggle('off', videoTrack ? !videoTrack.enabled : false);
+        this.bgFilterBtn.classList.toggle('active', this.bgFilterType !== 'none');
     }
 
     showStatus(message, type) {
