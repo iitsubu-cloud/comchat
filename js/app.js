@@ -291,7 +291,12 @@ class ComChat {
         if (this.connections.has(peerId)) return;
         const conn = this.peer.connect(peerId);
         this.handleConnection(conn);
-        const call = this.peer.call(peerId, this.localStream);
+        const streamToSend = this.currentScreenStream
+            ? this.currentScreenStream
+            : (this.bgFilterType !== 'none' && this.bgFilterStream)
+                ? this.bgFilterStream
+                : this.localStream;
+        const call = this.peer.call(peerId, streamToSend);
         this.handleCall(call);
     }
 
@@ -364,7 +369,12 @@ class ComChat {
             call.close();
             return;
         }
-        call.answer(this.localStream);
+        const streamToAnswer = this.currentScreenStream
+            ? this.currentScreenStream
+            : (this.bgFilterType !== 'none' && this.bgFilterStream)
+                ? this.bgFilterStream
+                : this.localStream;
+        call.answer(streamToAnswer);
         this.handleCall(call);
     }
 
@@ -1061,7 +1071,7 @@ class ComChat {
                 this.blurCtx.drawImage(sourceImage, -b, -b, w + 2 * b, h + 2 * b);
                 this.blurCtx.filter = 'none';
             } else {
-                // Safari fallback: 8-pass 1/2-scale down/up (stronger blur)
+                // Safari fallback: 7-pass 1/2-scale down/up (stronger blur)
                 const sw = this.smallCanvas.width, sh = this.smallCanvas.height;
                 this.blurCtx.imageSmoothingEnabled = true;
                 this.blurCtx.imageSmoothingQuality = 'high';
@@ -1302,6 +1312,12 @@ class ComChat {
             try {
                 this.showStatus('背景フィルターを読み込み中...', 'connecting');
                 await this.initSelfieSegmentation();
+                if (this.bgFilterType === 'none') {
+                    if (this.imageSegmenter) { this.imageSegmenter.close(); this.imageSegmenter = null; }
+                    this.stopBgFilterLoop();
+                    this.cleanupBgFilterResources();
+                    return;
+                }
                 // Pre-allocate compositing canvases (avoids per-frame allocation)
                 this.maskCanvas = document.createElement('canvas');
                 this.maskCanvas.width = srcW;
@@ -1397,6 +1413,13 @@ class ComChat {
         this.stopBgFilterLoop();
         this.cleanupBgFilterResources();
         this.bgFilterType = 'none';
+        // Free cached background image bitmaps (uploads and presets)
+        if (this.bgImage && !Object.values(this.bgPresets).includes(this.bgImage)) {
+            this.bgImage.close();
+        }
+        this.bgImage = null;
+        Object.values(this.bgPresets).forEach(bm => bm.close());
+        this.bgPresets = {};
 
         this.connections.forEach((conn) => conn.close());
         this.connections.clear();
