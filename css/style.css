@@ -986,3 +986,14 @@ body {
         flex-shrink: 0;
     }
 }
+
+/* 非常に小さい画面（320px等）でボタンが溢れないよう余白を縮小 */
+@media (max-width: 360px) {
+    .hero-form .btn {
+        padding: 12px 14px;
+        font-size: 1em;
+    }
+    .hero-form .btn-group {
+        gap: 10px;
+    }
+}

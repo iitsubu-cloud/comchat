@@ -220,6 +220,9 @@ class ComChat {
             this.showStatus('ルームを作成しました。ルームIDを友達に共有してください', 'connected');
 
         } catch (error) {
+            this.stopBgFilterLoop();
+            this.cleanupBgFilterResources();
+            this.bgFilterType = 'none';
             if (this.localStream) {
                 this.localStream.getTracks().forEach(t => t.stop());
                 this.localStream = null;
@@ -259,6 +262,9 @@ class ComChat {
             this.updateRoomInfo();
 
         } catch (error) {
+            this.stopBgFilterLoop();
+            this.cleanupBgFilterResources();
+            this.bgFilterType = 'none';
             if (this.localStream) {
                 this.localStream.getTracks().forEach(t => t.stop());
                 this.localStream = null;
@@ -1385,6 +1391,9 @@ class ComChat {
         this.prevConfidenceData = null;
         this.bgFilterCanvas = null;
         this.bgFilterCtx = null;
+        if (this.bgFilterStream) {
+            this.bgFilterStream.getTracks().forEach(t => t.stop());
+        }
         this.bgFilterStream = null;
     }
 
@@ -1636,7 +1645,14 @@ class ComChat {
         // Show preview (hidden initially until video loads)
         this.precallPreview.srcObject = this.localStream;
         this.precallPreview.play().catch(() => {});
+        this._noCameraTimeout = setTimeout(() => {
+            if (!this.precallNoCamera.classList.contains('hidden')) {
+                this.precallNoCamera.querySelector('span').textContent = 'カメラを起動できませんでした';
+            }
+        }, 5000);
         this.precallPreview.addEventListener('loadeddata', () => {
+            clearTimeout(this._noCameraTimeout);
+            this._noCameraTimeout = null;
             this.precallNoCamera.classList.add('hidden');
         }, { once: true });
 
@@ -1644,6 +1660,7 @@ class ComChat {
     }
 
     cancelPreCall() {
+        if (this._noCameraTimeout) { clearTimeout(this._noCameraTimeout); this._noCameraTimeout = null; }
         this.precallDialog.classList.add('hidden');
         this.filterPanel.classList.add('hidden');
         if (this.bgImagePanel) this.bgImagePanel.classList.add('hidden');
@@ -1679,6 +1696,7 @@ class ComChat {
     }
 
     async confirmPreCall() {
+        if (this._noCameraTimeout) { clearTimeout(this._noCameraTimeout); this._noCameraTimeout = null; }
         const action = this.precallAction;
         this.precallAction = null;
         this.precallDialog.classList.add('hidden');
@@ -1821,6 +1839,7 @@ class ComChat {
             this.statusDiv.textContent = message;
             this.statusDiv.className = `status ${type}`;
         }
+        document.querySelectorAll('.toast').forEach(t => t.remove());
         const toast = document.createElement('div');
         toast.className = `toast toast-${type}`;
         toast.textContent = message;
