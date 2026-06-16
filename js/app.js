@@ -229,6 +229,7 @@ class ComChat {
             this.roomId = null;
             this.createRoomBtn.disabled = false;
             this.joinRoomBtn.disabled = false;
+            this.confirmJoinBtn.disabled = false;
             this.showStatus('ルーム作成に失敗しました: ' + error.message, 'error');
         } finally {
             this.isConnecting = false;
@@ -336,6 +337,8 @@ class ComChat {
         if (this.connections.has(peerId)) return;
         const conn = this.peer.connect(peerId);
         this.handleConnection(conn);
+        // handleConnection が容量超過でconn.close()した場合はコールも発信しない
+        if (!this.connections.has(peerId)) return;
         const streamToSend = this.currentScreenStream
             ? this.currentScreenStream
             : (this.bgFilterType !== 'none' && this.bgFilterStream)
@@ -520,13 +523,19 @@ class ComChat {
                 if (!transfer) break;
                 this.receivingFiles.delete(data.id);
                 const { meta, chunks, progress } = transfer;
+                let missing = 0;
                 const buffers = [];
                 for (let i = 0; i < meta.totalChunks; i++) {
-                    if (!chunks[i]) continue;
+                    if (!chunks[i]) { missing++; continue; }
                     const bin = atob(chunks[i]);
                     const buf = new Uint8Array(bin.length);
                     for (let j = 0; j < bin.length; j++) buf[j] = bin.charCodeAt(j);
                     buffers.push(buf);
+                }
+                if (missing > 0) {
+                    progress.statusEl.textContent = `受信エラー（${missing}チャンク欠損）`;
+                    progress.barInner.style.background = '#dc3545';
+                    break;
                 }
                 const blob = new Blob(buffers, { type: meta.mimeType || 'application/octet-stream' });
                 const url = URL.createObjectURL(blob);
@@ -1302,6 +1311,7 @@ class ComChat {
                     bitmap.close();
                 }
             } catch (e) {}
+            if (this.bgFilterType === 'none') return;
             this.bgFilterAnimId = requestAnimationFrame(loop);
         };
         this.bgFilterAnimId = requestAnimationFrame(loop);
@@ -1690,7 +1700,7 @@ class ComChat {
         track.enabled = !track.enabled;
         this.precallVideoBtn.classList.toggle('off', !track.enabled);
         this.precallNoCamera.classList.toggle('hidden', track.enabled);
-        if (track.enabled) {
+        if (!track.enabled) {
             this.precallNoCamera.querySelector('span').textContent = 'カメラオフ';
         }
         if (this.bgFilterType !== 'none' && this.bgFilterCtx && this.bgFilterCanvas) {
