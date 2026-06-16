@@ -69,7 +69,7 @@ body {
 
 .welcome-title {
     font-family: 'Klee One', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', sans-serif;
-    font-size: clamp(2em, 5.5vw, 3.8em);
+    font-size: clamp(1.6em, 4vw, 3em);
     font-weight: 600;
     line-height: 1.5;
     color: #1a1a1a;
@@ -949,7 +949,7 @@ body {
     }
 
     .welcome-title {
-        font-size: clamp(1.6em, 7vw, 2.4em);
+        font-size: clamp(1.4em, 6vw, 2em);
     }
 
     .btn-group {
