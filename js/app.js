@@ -373,6 +373,18 @@ class ComChat {
             this.connections.delete(conn.peer);
             this.usernames.delete(conn.peer);
             this.muteStates.delete(conn.peer);
+            this.removeVideoElement(conn.peer);
+            if (this.currentRemoteSharerId === conn.peer) {
+                this.exitRemotePresenterMode();
+            }
+            for (const [id, transfer] of this.receivingFiles.entries()) {
+                if (transfer.senderId === conn.peer) {
+                    transfer.progress.statusEl.textContent = '転送中断';
+                    transfer.progress.barInner.style.background = '#dc3545';
+                    this.receivingFiles.delete(id);
+                }
+            }
+            if (this.peer) this.updateRoomInfo();
         });
 
         conn.on('open', () => {
@@ -519,8 +531,8 @@ class ComChat {
             case 'file-chunk':
                 if (this.receivingFiles.has(data.id)) {
                     const tf = this.receivingFiles.get(data.id);
+                    if (!tf.chunks[data.index]) tf.received++;
                     tf.chunks[data.index] = data.data;
-                    tf.received++;
                     this.updateFileProgress(tf.progress, Math.round(tf.received / tf.meta.totalChunks * 100));
                 }
                 break;
@@ -1653,7 +1665,10 @@ class ComChat {
         this.precallPreview.addEventListener('loadeddata', () => {
             clearTimeout(this._noCameraTimeout);
             this._noCameraTimeout = null;
-            this.precallNoCamera.classList.add('hidden');
+            const videoTrack = this.localStream?.getVideoTracks()[0];
+            if (!videoTrack || videoTrack.enabled) {
+                this.precallNoCamera.classList.add('hidden');
+            }
         }, { once: true });
 
         this.precallDialog.classList.remove('hidden');
