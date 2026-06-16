@@ -105,6 +105,11 @@ body {
     width: 100%;
 }
 
+.hero-form .btn-group {
+    flex-direction: row;
+    flex-wrap: nowrap;
+}
+
 .hero-form #username {
     text-align: center;
     border-radius: 50px;
