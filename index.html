@@ -4,7 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ComChat - 完全無料ビデオ会議</title>
-    <link rel="stylesheet" href="css/style.css?v=17">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Klee+One:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css?v=18">
     <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>">
 </head>
 <body>
@@ -18,31 +21,28 @@
         <div class="main-content">
             <!-- Welcome Screen -->
             <div id="welcome-screen" class="welcome-screen">
-                <h1 class="welcome-title">The Web Conference Room for the rest of us</h1>
-                <p class="welcome-description">
-                    ComChatは完全無料のP2Pビデオ会議アプリです。<br>
-                    最大6人まで同時通話が可能で、時間制限もありません。<br>
-                    ブラウザだけで動作し、アプリのインストールは不要です。
-                </p>
-                
-                <div class="input-group">
-                    <label for="username">あなたの名前</label>
-                    <input type="text" id="username" placeholder="名前を入力してください" value="ユーザー">
+                <div class="hero-content">
+                    <h1 class="welcome-title">The Web Conference Room<br>for the rest of us.</h1>
+                    <div class="hero-accent">💬</div>
+                    <p class="welcome-description">
+                        ComChatは無料のP2Pビデオ会議アプリです。<br>
+                        最大6人まで同時通話が可能で、時間制限もありません。<br>
+                        ブラウザだけで動作し、インストール不要です。
+                    </p>
                 </div>
-
-                <div class="btn-group">
-                    <button id="create-room" class="btn btn-primary">
-                        🏠 ルーム作成
-                    </button>
-                    <button id="join-room" class="btn btn-secondary">
-                        🚪 ルーム参加
-                    </button>
-                </div>
-
-                <div id="join-group" class="input-group hidden" style="margin-top: 20px;">
-                    <label for="join-room-id">ルームID</label>
-                    <input type="text" id="join-room-id" placeholder="友達から共有されたルームIDを入力">
-                    <button id="confirm-join" class="btn btn-secondary" style="margin-top: 10px; width: 100%;">参加する</button>
+                <div class="hero-form">
+                    <div class="input-group">
+                        <input type="text" id="username" placeholder="あなたの名前" value="ユーザー">
+                    </div>
+                    <div class="btn-group">
+                        <button id="create-room" class="btn btn-primary">🏠 ルーム作成</button>
+                        <button id="join-room" class="btn btn-secondary">🚪 ルーム参加</button>
+                    </div>
+                    <div id="join-group" class="input-group hidden" style="margin-top: 16px;">
+                        <label for="join-room-id">ルームID</label>
+                        <input type="text" id="join-room-id" placeholder="友達から共有されたルームIDを入力">
+                        <button id="confirm-join" class="btn btn-secondary" style="margin-top: 10px; width: 100%;">参加する</button>
+                    </div>
                 </div>
             </div>
 
