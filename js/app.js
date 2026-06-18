@@ -45,6 +45,9 @@ class ComChat {
         this.currentRemoteSharerId = null;
         this.currentScreenStream = null;
         this.cameraVideoTrack = null;
+        this.unreadCount = 0;
+        this.isChatVisible = true;
+        this.chatObserver = null;
 
         this.initializeUI();
     }
@@ -55,6 +58,15 @@ class ComChat {
         this.videoGrid = document.getElementById('video-grid');
         this.chatMessages = document.getElementById('chat-messages');
         this.chatInput = document.getElementById('chat-input');
+        this.chatUnreadBadge = document.getElementById('chat-unread-badge');
+        this.chatObserver = new IntersectionObserver((entries) => {
+            if (entries[0].isIntersecting) {
+                this.isChatVisible = true;
+                this.clearUnreadBadge();
+            } else {
+                this.isChatVisible = false;
+            }
+        }, { threshold: 1.0 });
         this.statusDiv = document.getElementById('status'); // may be null if removed from HTML
         this.roomIdDisplay = document.getElementById('room-id-display');
         this.participantCount = document.getElementById('participant-count');
@@ -682,6 +694,23 @@ class ComChat {
         messageDiv.appendChild(span);
         this.chatMessages.appendChild(messageDiv);
         this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+        if (!this.isChatVisible) {
+            this.unreadCount++;
+            this.updateUnreadBadge();
+        }
+    }
+
+    updateUnreadBadge() {
+        if (!this.chatUnreadBadge) return;
+        this.chatUnreadBadge.textContent = this.unreadCount > 99 ? '99+' : String(this.unreadCount);
+        this.chatUnreadBadge.classList.remove('hidden');
+    }
+
+    clearUnreadBadge() {
+        this.unreadCount = 0;
+        if (!this.chatUnreadBadge) return;
+        this.chatUnreadBadge.classList.add('hidden');
+        this.chatUnreadBadge.textContent = '';
     }
 
     async sendFile(file) {
@@ -1819,6 +1848,8 @@ class ComChat {
         this.chatMessages.innerHTML = '';
         this.isSendingFile = false;
         this.fileAttachBtn.disabled = false;
+        if (this.chatObserver) this.chatObserver.unobserve(this.chatMessages);
+        this.clearUnreadBadge();
         this.showWelcomeScreen();
         this.showStatus('退室しました', 'connected');
     }
@@ -1851,6 +1882,7 @@ class ComChat {
         const videoTrack = this.localStream?.getVideoTracks()[0];
         this.toggleVideoBtn.classList.toggle('off', videoTrack ? !videoTrack.enabled : false);
         this.bgFilterBtn.classList.toggle('active', this.bgFilterType !== 'none');
+        if (this.chatObserver) this.chatObserver.observe(this.chatMessages);
     }
 
     showStatus(message, type) {

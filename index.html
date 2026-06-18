@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Klee+One:wght@400;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/style.css?v=24">
+    <link rel="stylesheet" href="css/style.css?v=25">
     <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>">
 </head>
 <body>
@@ -138,7 +138,7 @@
 
                     <!-- Right: Chat -->
                     <div class="chat-container">
-                        <div class="chat-header">チャット</div>
+                        <div class="chat-header">チャット<span id="chat-unread-badge" class="chat-unread-badge hidden"></span></div>
                         <div id="chat-messages" class="chat-messages">
                         </div>
                         <div class="chat-input-container">
@@ -264,7 +264,7 @@
 
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
-    <script src="js/app.js?v=63"></script>
+    <script src="js/app.js?v=64"></script>
 
     <script>
         // タブを閉じる/ページ遷移時にリソースだけ解放（UI操作は不要）

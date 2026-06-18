@@ -405,6 +405,31 @@ body {
     color: white;
     font-weight: 600;
     font-size: 0.95em;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.chat-unread-badge {
+    background: #dc3545;
+    color: white;
+    border-radius: 50%;
+    min-width: 20px;
+    height: 20px;
+    font-size: 0.72em;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px;
+    line-height: 1;
+    animation: badgePop 0.15s ease;
+    flex-shrink: 0;
+}
+
+@keyframes badgePop {
+    from { transform: scale(0.5); opacity: 0; }
+    to   { transform: scale(1);   opacity: 1; }
 }
 
 .chat-messages {
@@ -982,7 +1007,23 @@ body {
         grid-template-columns: 1fr;
         flex: 0 0 auto;
         min-height: 0;
-        max-height: 160px;
+        max-height: 130px;
+    }
+
+    .container:has(#call-screen:not(.hidden)) {
+        height: auto;
+        min-height: 100svh;
+        overflow: visible;
+    }
+
+    .container:has(#call-screen:not(.hidden)) .main-content {
+        flex: none;
+        overflow-y: visible;
+    }
+
+    #call-screen {
+        flex: none;
+        overflow: visible;
     }
 
     .controls {
@@ -992,6 +1033,8 @@ body {
 
     .call-layout {
         flex-direction: column;
+        height: auto;
+        overflow: visible;
     }
 
     .call-main {
@@ -1000,9 +1043,9 @@ body {
 
     .chat-container {
         width: 100%;
-        flex: 1;
-        height: auto;
-        min-height: 160px;
+        flex: none;
+        height: 380px;
+        min-height: 0;
     }
 
     .chat-header {
