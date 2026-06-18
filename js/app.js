@@ -271,6 +271,8 @@ class ComChat {
             }
             if (this.peer) { this.peer.destroy(); this.peer = null; }
             this.roomId = null;
+            this.createRoomBtn.disabled = false;
+            this.joinRoomBtn.disabled = false;
             this.confirmJoinBtn.disabled = false;
             this.showStatus('ルーム参加に失敗しました: ' + error.message, 'error');
         } finally {
@@ -373,6 +375,7 @@ class ComChat {
             this.connections.delete(conn.peer);
             this.usernames.delete(conn.peer);
             this.muteStates.delete(conn.peer);
+            this.cameraStates.delete(conn.peer);
             this.removeVideoElement(conn.peer);
             if (this.currentRemoteSharerId === conn.peer) {
                 this.exitRemotePresenterMode();
@@ -414,6 +417,7 @@ class ComChat {
             this.connections.delete(conn.peer);
             this.usernames.delete(conn.peer);
             this.muteStates.delete(conn.peer);
+            this.cameraStates.delete(conn.peer);
             this.removeVideoElement(conn.peer);
             if (this.currentRemoteSharerId === conn.peer) {
                 this.exitRemotePresenterMode();
