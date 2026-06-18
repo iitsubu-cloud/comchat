@@ -1007,7 +1007,7 @@ body {
         grid-template-columns: 1fr;
         flex: 0 0 auto;
         min-height: 0;
-        max-height: 160px;
+        max-height: 200px;
     }
 
     .container:has(#call-screen:not(.hidden)) {
