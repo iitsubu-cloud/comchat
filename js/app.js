@@ -113,16 +113,20 @@ class ComChat {
 
         this.createRoomBtn.addEventListener('click', () => this.showPreCallDialog('create'));
         this.joinRoomBtn.addEventListener('click', () => this.showJoinInput());
-        this.confirmJoinBtn.addEventListener('click', () => {
+        // join-group is a <form>: both the submit button tap and the keyboard's
+        // Enter/Go key fire 'submit'. This is the iOS-friendly path so the
+        // confirm button doesn't need to be visible behind the keyboard.
+        this.joinGroup.addEventListener('submit', (e) => {
+            e.preventDefault();
             const roomId = this.joinRoomIdInput.value.trim();
             if (!roomId) { this.showStatus('ルームIDを入力してください', 'error'); return; }
             this.showPreCallDialog('join');
         });
-        this.joinRoomIdInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                const roomId = this.joinRoomIdInput.value.trim();
-                if (roomId) this.showPreCallDialog('join');
-            }
+        // Keep the confirm button reachable above the on-screen keyboard.
+        this.joinRoomIdInput.addEventListener('focus', () => {
+            setTimeout(() => {
+                this.confirmJoinBtn.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            }, 300);
         });
         this.chatSendBtn.addEventListener('click', () => this.sendMessage());
         this.chatInput.addEventListener('keydown', (e) => {

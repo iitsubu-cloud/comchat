@@ -38,11 +38,11 @@
                         <button id="create-room" class="btn btn-primary">🏠 ルーム作成</button>
                         <button id="join-room" class="btn btn-secondary">🚪 ルーム参加</button>
                     </div>
-                    <div id="join-group" class="input-group hidden" style="margin-top: 16px;">
+                    <form id="join-group" class="input-group hidden" style="margin-top: 16px;">
                         <label for="join-room-id">ルームID</label>
-                        <input type="text" id="join-room-id" placeholder="友達から共有されたルームIDを入力" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" inputmode="latin">
-                        <button id="confirm-join" class="btn btn-secondary" style="margin-top: 10px; width: 100%;">参加する</button>
-                    </div>
+                        <input type="text" id="join-room-id" placeholder="友達から共有されたルームIDを入力" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" inputmode="latin" enterkeyhint="go">
+                        <button id="confirm-join" type="submit" class="btn btn-secondary" style="margin-top: 10px; width: 100%;">参加する</button>
+                    </form>
                 </div>
             </div>
 
@@ -273,7 +273,7 @@
 
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
-    <script src="js/app.js?v=69"></script>
+    <script src="js/app.js?v=70"></script>
 
     <script>
         // タブを閉じる/ページ遷移時にリソースだけ解放（UI操作は不要）
