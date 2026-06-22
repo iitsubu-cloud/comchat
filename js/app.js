@@ -308,13 +308,30 @@ class ComChat {
         return new Promise((resolve, reject) => {
             this.peer = new Peer(id, { debug: 0 });
 
+            // PeerJS のクラウドサーバ接続が滞ると 'open'/'error' のどちらも
+            // 来ずに永久にハングするため、タイムアウトで必ず解決させる
+            let settled = false;
+            const timeout = setTimeout(() => {
+                if (settled) return;
+                settled = true;
+                this.peer.off('open', onOpen);
+                this.peer.off('error', onError);
+                reject(new Error('サーバーに接続できませんでした（タイムアウト）。電波状況をご確認ください'));
+            }, 10000);
+
             const onOpen = (peerId) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeout);
                 this.peer.off('error', onError);
                 console.log('Peer connected with ID:', peerId);
                 resolve(peerId);
             };
 
             const onError = (error) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeout);
                 this.peer.off('open', onOpen);
                 console.error('Peer error:', error);
                 reject(error);
@@ -367,6 +384,26 @@ class ComChat {
         setTimeout(() => this.attemptReconnect(n + 1), 2000 * (n + 1));
     }
 
+    // Map a getUserMedia failure to an actionable Japanese message. iOS Safari
+    // (especially Private Browsing / non-HTTPS) surfaces several distinct causes.
+    describeMediaError(err) {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            return 'カメラ/マイクを利用できません。HTTPS接続でアクセスしてください';
+        }
+        switch (err && err.name) {
+            case 'NotAllowedError':
+            case 'SecurityError':
+                return 'カメラ/マイクの使用が許可されていません。Safariの設定で許可してください';
+            case 'NotFoundError':
+            case 'OverconstrainedError':
+                return 'カメラまたはマイクが見つかりません';
+            case 'NotReadableError':
+                return 'カメラ/マイクが他のアプリで使用中です。他のアプリを閉じてからお試しください';
+            default:
+                return 'カメラ/マイクにアクセスできませんでした（' + (err && err.name ? err.name : '不明なエラー') + '）';
+        }
+    }
+
     async getUserMedia() {
         if (!this.localStream) {
             try {
@@ -375,7 +412,7 @@ class ComChat {
                     audio: true
                 });
             } catch (error) {
-                throw new Error('カメラ/マイクへのアクセスが拒否されました');
+                throw new Error(this.describeMediaError(error));
             }
         }
         const displayStream = (this.bgFilterType !== 'none' && this.bgFilterStream)
@@ -1820,7 +1857,7 @@ class ComChat {
         try {
             this.localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         } catch (err) {
-            this.showStatus('カメラ/マイクへのアクセスが拒否されました', 'error');
+            this.showStatus(this.describeMediaError(err), 'error');
             this.isConnecting = false;
             this.createRoomBtn.disabled = false;
             this.joinRoomBtn.disabled = false;
