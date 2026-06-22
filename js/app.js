@@ -257,7 +257,8 @@ class ComChat {
 
     async joinRoom() {
         if (this.isConnecting) return;
-        const roomId = this.joinRoomIdInput.value.trim();
+        // Strip iOS smart punctuation / auto-capitalization; room IDs are lowercase [0-9a-z]
+        const roomId = this.joinRoomIdInput.value.trim().toLowerCase().replace(/[^0-9a-z]/g, '');
         if (!roomId) {
             this.showStatus('ルームIDを入力してください', 'error');
             return;
