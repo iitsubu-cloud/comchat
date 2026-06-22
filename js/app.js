@@ -371,7 +371,12 @@ class ComChat {
     handleConnection(conn) {
         // Enforce 6-person limit (5 remotes + self)
         if (this.connections.size >= 5) {
-            conn.close();
+            // Notify the joiner that the room is full before closing, so they
+            // can show an error instead of silently landing in an empty room.
+            conn.on('open', () => {
+                try { conn.send({ type: 'room-full' }); } catch {}
+                setTimeout(() => { try { conn.close(); } catch {} }, 150);
+            });
             return;
         }
         // Reject duplicate connections from the same peer
@@ -503,6 +508,10 @@ class ComChat {
 
     handleDataMessage(data, senderId) {
         switch (data.type) {
+            case 'room-full':
+                this.hangup();
+                this.showStatus('ルームは満員です（最大6人）', 'error');
+                break;
             case 'chat':
                 this.displayChatMessage(data.username, data.message);
                 break;
@@ -673,7 +682,7 @@ class ComChat {
         const message = this.chatInput.value.trim();
         if (!message) return;
 
-        this.displayChatMessage(this.username, message);
+        this.displayChatMessage(this.username, message, true);
 
         this.broadcast({
             type: 'chat',
@@ -684,7 +693,7 @@ class ComChat {
         this.chatInput.value = '';
     }
 
-    displayChatMessage(username, message) {
+    displayChatMessage(username, message, isOwn = false) {
         const messageDiv = document.createElement('div');
         const strong = document.createElement('strong');
         strong.textContent = username + ':';
@@ -694,7 +703,7 @@ class ComChat {
         messageDiv.appendChild(span);
         this.chatMessages.appendChild(messageDiv);
         this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
-        if (!this.isChatVisible) {
+        if (!isOwn && !this.isChatVisible) {
             this.unreadCount++;
             this.updateUnreadBadge();
         }
@@ -903,7 +912,7 @@ class ComChat {
                 const sender = call.peerConnection.getSenders().find(s =>
                     s.track && s.track.kind === 'video'
                 );
-                if (sender) sender.replaceTrack(screenVideoTrack);
+                if (sender) sender.replaceTrack(screenVideoTrack).catch(() => {});
             });
 
             this.screenShareVideo.srcObject = screenStream;
@@ -929,6 +938,9 @@ class ComChat {
 
     enterRemotePresenterMode(sharerPeerId, sharerUsername) {
         this.currentRemoteSharerId = sharerPeerId;
+
+        // Audio plays from the sharer's grid thumbnail; mute here to avoid double playback.
+        this.screenShareVideo.muted = true;
 
         const sharerVideoEl = document.querySelector(`#video-${sharerPeerId} .video-element`);
         if (sharerVideoEl && sharerVideoEl.srcObject) {
@@ -1849,6 +1861,7 @@ class ComChat {
         this.isSendingFile = false;
         this.fileAttachBtn.disabled = false;
         if (this.chatObserver) this.chatObserver.unobserve(this.chatMessages);
+        this.isChatVisible = true;
         this.clearUnreadBadge();
         this.showWelcomeScreen();
         this.showStatus('退室しました', 'connected');
