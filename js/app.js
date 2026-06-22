@@ -45,6 +45,10 @@ class ComChat {
         this.currentRemoteSharerId = null;
         this.currentScreenStream = null;
         this.cameraVideoTrack = null;
+        this.mixAudioContext = null;
+        this.mixedAudioTrack = null;
+        this.mixSources = [];
+        this.isLeaving = false;
         this.unreadCount = 0;
         this.isChatVisible = true;
         this.chatObserver = null;
@@ -293,6 +297,7 @@ class ComChat {
     }
 
     async initializePeer(id = null) {
+        this.isLeaving = false;
         return new Promise((resolve, reject) => {
             this.peer = new Peer(id, { debug: 0 });
 
@@ -331,6 +336,28 @@ class ComChat {
                 this.showStatus('接続が切断されました。再度お試しください', 'error');
             }
         });
+
+        // Signaling server connection dropped. Existing P2P links may survive,
+        // but new peers can't join until we reconnect with the same ID.
+        this.peer.on('disconnected', () => {
+            if (this.isLeaving || !this.peer || this.peer.destroyed) return;
+            this.showStatus('接続が不安定です。再接続中...', 'connecting');
+            this.attemptReconnect(0);
+        });
+    }
+
+    attemptReconnect(n) {
+        if (this.isLeaving || !this.peer || this.peer.destroyed) return;
+        if (!this.peer.disconnected) {
+            this.showStatus('再接続しました', 'connected');
+            return;
+        }
+        if (n >= 5) {
+            this.showStatus('サーバーに再接続できませんでした', 'error');
+            return;
+        }
+        try { this.peer.reconnect(); } catch {}
+        setTimeout(() => this.attemptReconnect(n + 1), 2000 * (n + 1));
     }
 
     async getUserMedia() {
@@ -359,13 +386,28 @@ class ComChat {
         this.handleConnection(conn);
         // handleConnection が容量超過でconn.close()した場合はコールも発信しない
         if (!this.connections.has(peerId)) return;
-        const streamToSend = this.currentScreenStream
-            ? this.currentScreenStream
-            : (this.bgFilterType !== 'none' && this.bgFilterStream)
-                ? this.bgFilterStream
-                : this.localStream;
-        const call = this.peer.call(peerId, streamToSend);
+        const call = this.peer.call(peerId, this.getOutgoingStream());
         this.handleCall(call);
+    }
+
+    // Build the outgoing media stream: correct video source (screen > bg-filter
+    // canvas > camera) paired with the mic audio (or mixed mic+screen audio
+    // while screen-sharing). The canvas captureStream has no audio track, so
+    // explicitly attaching audio here keeps late joiners from losing our voice.
+    getOutgoingStream() {
+        const tracks = [];
+        let videoTrack;
+        if (this.currentScreenStream) {
+            videoTrack = this.currentScreenStream.getVideoTracks()[0];
+        } else if (this.bgFilterType !== 'none' && this.bgFilterStream) {
+            videoTrack = this.bgFilterStream.getVideoTracks()[0];
+        } else {
+            videoTrack = this.localStream?.getVideoTracks()[0];
+        }
+        if (videoTrack) tracks.push(videoTrack);
+        const audioTrack = this.mixedAudioTrack || this.localStream?.getAudioTracks()[0];
+        if (audioTrack) tracks.push(audioTrack);
+        return new MediaStream(tracks);
     }
 
     handleConnection(conn) {
@@ -458,12 +500,7 @@ class ComChat {
             call.close();
             return;
         }
-        const streamToAnswer = this.currentScreenStream
-            ? this.currentScreenStream
-            : (this.bgFilterType !== 'none' && this.bgFilterStream)
-                ? this.bgFilterStream
-                : this.localStream;
-        call.answer(streamToAnswer);
+        call.answer(this.getOutgoingStream());
         this.handleCall(call);
     }
 
@@ -915,6 +952,20 @@ class ComChat {
                 if (sender) sender.replaceTrack(screenVideoTrack).catch(() => {});
             });
 
+            // Mix screen (tab/system) audio with mic so peers hear shared audio
+            const screenAudioTrack = screenStream.getAudioTracks()[0];
+            if (screenAudioTrack) {
+                const mixedTrack = this.buildMixedAudioTrack(screenStream);
+                if (mixedTrack) {
+                    this.calls.forEach((call) => {
+                        const sender = call.peerConnection.getSenders().find(s =>
+                            s.track && s.track.kind === 'audio'
+                        );
+                        if (sender) sender.replaceTrack(mixedTrack).catch(() => {});
+                    });
+                }
+            }
+
             this.screenShareVideo.srcObject = screenStream;
             this.screenShareVideo.muted = true;
             this.screenShareVideo.classList.remove('hidden');
@@ -990,6 +1041,18 @@ class ComChat {
             if (sender && restoreTrack) sender.replaceTrack(restoreTrack).catch(() => {});
         });
 
+        // Restore mic-only audio if it was mixed with screen audio
+        if (this.mixedAudioTrack) {
+            const micTrack = this.localStream?.getAudioTracks()[0];
+            this.calls.forEach((call) => {
+                const sender = call.peerConnection.getSenders().find(s =>
+                    s.track && s.track.kind === 'audio'
+                );
+                if (sender && micTrack) sender.replaceTrack(micTrack).catch(() => {});
+            });
+            this.teardownMixedAudio();
+        }
+
         // Restore grid layout
         this.screenShareVideo.srcObject = null;
         this.screenShareVideo.classList.add('hidden');
@@ -1002,6 +1065,44 @@ class ComChat {
         this.shareScreenBtn.classList.remove('active');
         this.broadcast({ type: 'screen-share-stop' });
         this.cameraVideoTrack = null;
+    }
+
+    buildMixedAudioTrack(screenStream) {
+        try {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) return null;
+            const ctx = new AudioCtx();
+            const dest = ctx.createMediaStreamDestination();
+
+            const micTrack = this.localStream?.getAudioTracks()[0];
+            if (micTrack) {
+                const micSource = ctx.createMediaStreamSource(new MediaStream([micTrack]));
+                micSource.connect(dest);
+                this.mixSources.push(micSource);
+            }
+            const screenAudioTrack = screenStream.getAudioTracks()[0];
+            if (screenAudioTrack) {
+                const screenSource = ctx.createMediaStreamSource(new MediaStream([screenAudioTrack]));
+                screenSource.connect(dest);
+                this.mixSources.push(screenSource);
+            }
+
+            this.mixAudioContext = ctx;
+            this.mixedAudioTrack = dest.stream.getAudioTracks()[0];
+            return this.mixedAudioTrack;
+        } catch {
+            this.teardownMixedAudio();
+            return null;
+        }
+    }
+
+    teardownMixedAudio() {
+        this.mixSources.forEach(s => { try { s.disconnect(); } catch {} });
+        this.mixSources = [];
+        if (this.mixedAudioTrack) { try { this.mixedAudioTrack.stop(); } catch {} }
+        this.mixedAudioTrack = null;
+        if (this.mixAudioContext) { try { this.mixAudioContext.close(); } catch {} }
+        this.mixAudioContext = null;
     }
 
     getCSSFilter(type) {
@@ -1802,7 +1903,9 @@ class ComChat {
     }
 
     hangup() {
+        this.isLeaving = true;
         if (this.currentScreenStream) this.stopScreenShare();
+        this.teardownMixedAudio();
 
         // Stop bg filter loop before stopping localStream to avoid reading stopped tracks
         this.stopBgFilterLoop();
