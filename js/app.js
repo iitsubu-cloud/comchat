@@ -63,6 +63,10 @@ class ComChat {
         this.chatMessages = document.getElementById('chat-messages');
         this.chatInput = document.getElementById('chat-input');
         this.chatUnreadBadge = document.getElementById('chat-unread-badge');
+        this.chatToggleBadge = document.getElementById('chat-toggle-badge');
+        this.chatContainer = document.querySelector('.chat-container');
+        this.toggleChatBtn = document.getElementById('toggle-chat');
+        this.chatCloseBtn = document.getElementById('chat-close-btn');
         this.chatObserver = new IntersectionObserver((entries) => {
             if (entries[0].isIntersecting) {
                 this.isChatVisible = true;
@@ -141,6 +145,8 @@ class ComChat {
         this.toggleAudioBtn.addEventListener('click', () => this.toggleAudio());
         this.shareScreenBtn.addEventListener('click', () => this.shareScreen());
         this.stopShareBtn.addEventListener('click', () => this.stopScreenShare());
+        if (this.toggleChatBtn) this.toggleChatBtn.addEventListener('click', () => this.toggleChat());
+        if (this.chatCloseBtn) this.chatCloseBtn.addEventListener('click', () => this.closeChat());
 
         this.fileInput = document.getElementById('file-input');
         this.fileAttachBtn = document.getElementById('file-attach-btn');
@@ -748,16 +754,50 @@ class ComChat {
     }
 
     updateUnreadBadge() {
-        if (!this.chatUnreadBadge) return;
-        this.chatUnreadBadge.textContent = this.unreadCount > 99 ? '99+' : String(this.unreadCount);
-        this.chatUnreadBadge.classList.remove('hidden');
+        const label = this.unreadCount > 99 ? '99+' : String(this.unreadCount);
+        if (this.chatUnreadBadge) {
+            this.chatUnreadBadge.textContent = label;
+            this.chatUnreadBadge.classList.remove('hidden');
+        }
+        if (this.chatToggleBadge) {
+            this.chatToggleBadge.textContent = label;
+            this.chatToggleBadge.classList.remove('hidden');
+        }
     }
 
     clearUnreadBadge() {
         this.unreadCount = 0;
-        if (!this.chatUnreadBadge) return;
-        this.chatUnreadBadge.classList.add('hidden');
-        this.chatUnreadBadge.textContent = '';
+        if (this.chatUnreadBadge) {
+            this.chatUnreadBadge.classList.add('hidden');
+            this.chatUnreadBadge.textContent = '';
+        }
+        if (this.chatToggleBadge) {
+            this.chatToggleBadge.classList.add('hidden');
+            this.chatToggleBadge.textContent = '';
+        }
+    }
+
+    toggleChat() {
+        if (!this.chatContainer) return;
+        if (this.chatContainer.classList.contains('open')) {
+            this.closeChat();
+        } else {
+            this.openChat();
+        }
+    }
+
+    openChat() {
+        if (!this.chatContainer) return;
+        this.chatContainer.classList.add('open');
+        this.isChatVisible = true;
+        this.clearUnreadBadge();
+        this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+    }
+
+    closeChat() {
+        if (!this.chatContainer) return;
+        this.chatContainer.classList.remove('open');
+        this.isChatVisible = false;
     }
 
     async sendFile(file) {
@@ -1965,6 +2005,7 @@ class ComChat {
         this.isSendingFile = false;
         this.fileAttachBtn.disabled = false;
         if (this.chatObserver) this.chatObserver.unobserve(this.chatMessages);
+        if (this.chatContainer) this.chatContainer.classList.remove('open');
         this.isChatVisible = true;
         this.clearUnreadBadge();
         this.showWelcomeScreen();

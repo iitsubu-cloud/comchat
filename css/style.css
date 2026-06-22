@@ -410,6 +410,54 @@ body {
     justify-content: space-between;
 }
 
+.chat-header-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* チャットを閉じるボタン（モバイルのボトムシート用、PCでは非表示） */
+.chat-close-btn {
+    display: none;
+    background: rgba(255, 255, 255, 0.2);
+    border: none;
+    color: white;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    font-size: 0.9em;
+    line-height: 1;
+    cursor: pointer;
+}
+
+/* チャットトグルボタンの未読バッジ（PCでは非表示、モバイルのみ表示） */
+.ctrl-item-chat {
+    display: none;
+}
+
+.chat-btn {
+    position: relative;
+}
+
+.chat-toggle-badge {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    background: #dc3545;
+    color: white;
+    border-radius: 50%;
+    min-width: 18px;
+    height: 18px;
+    font-size: 0.62em;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px;
+    line-height: 1;
+    box-shadow: 0 0 0 2px #fff;
+}
+
 .chat-unread-badge {
     background: #dc3545;
     color: white;
@@ -1003,49 +1051,92 @@ body {
         align-items: center;
     }
 
+    /* 案A: モバイルは映像を主役にし、チャットはボトムシートで開閉 */
     .video-grid {
         grid-template-columns: 1fr;
-        flex: 0 0 auto;
+        grid-auto-rows: max-content;
+        flex: 1 1 auto;
         min-height: 0;
-        max-height: 200px;
+        max-height: none;
+        overflow-y: auto;
+        align-content: start;
+        gap: 8px;
     }
 
+    /* 通話画面は全画面固定・スクロールなしのアプリ風レイアウト */
     .container:has(#call-screen:not(.hidden)) {
-        height: auto;
+        height: 100svh;
         min-height: 100svh;
-        overflow: visible;
+        overflow: hidden;
     }
 
     .container:has(#call-screen:not(.hidden)) .main-content {
-        flex: none;
-        overflow-y: visible;
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
     }
 
     #call-screen {
-        flex: none;
-        overflow: visible;
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
     }
 
     .controls {
         justify-content: space-around;
         margin: 6px 0;
+        flex: 0 0 auto;
+    }
+
+    /* 6ボタンが狭い画面でも収まるよう縮小 */
+    .control-btn {
+        width: 46px;
+        height: 46px;
+        padding: 8px;
     }
 
     .call-layout {
         flex-direction: column;
-        height: auto;
-        overflow: visible;
+        height: 100%;
+        gap: 0;
+        overflow: hidden;
     }
 
     .call-main {
-        flex: 0 0 auto;
+        flex: 1;
+        min-height: 0;
     }
 
+    /* チャットをボトムシート化（既定は画面外に隠す） */
     .chat-container {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
         width: 100%;
+        height: 72svh;
         flex: none;
-        height: 380px;
         min-height: 0;
+        border: none;
+        border-radius: 16px 16px 0 0;
+        box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.25);
+        transform: translateY(100%);
+        transition: transform 0.25s ease;
+        z-index: 60;
+    }
+
+    .chat-container.open {
+        transform: translateY(0);
+    }
+
+    .ctrl-item-chat {
+        display: flex;
+    }
+
+    .chat-close-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
     }
 
     .chat-header {

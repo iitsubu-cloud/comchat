@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Klee+One:wght@400;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/style.css?v=27">
+    <link rel="stylesheet" href="css/style.css?v=28">
     <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>">
 </head>
 <body>
@@ -112,6 +112,15 @@
                                 </button>
                                 <span class="ctrl-label">フィルター</span>
                             </div>
+                            <div class="ctrl-item ctrl-item-chat">
+                                <button id="toggle-chat" class="control-btn chat-btn" title="チャット">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+                                    </svg>
+                                    <span id="chat-toggle-badge" class="chat-toggle-badge hidden"></span>
+                                </button>
+                                <span class="ctrl-label">チャット</span>
+                            </div>
                             <div class="ctrl-item">
                                 <button id="hangup" class="control-btn hangup" title="退室">
                                     <svg class="door-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -138,7 +147,7 @@
 
                     <!-- Right: Chat -->
                     <div class="chat-container">
-                        <div class="chat-header">チャット<span id="chat-unread-badge" class="chat-unread-badge hidden"></span></div>
+                        <div class="chat-header"><span class="chat-header-title">チャット<span id="chat-unread-badge" class="chat-unread-badge hidden"></span></span><button id="chat-close-btn" class="chat-close-btn" title="チャットを閉じる" aria-label="チャットを閉じる">✕</button></div>
                         <div id="chat-messages" class="chat-messages">
                         </div>
                         <div class="chat-input-container">
@@ -264,7 +273,7 @@
 
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
-    <script src="js/app.js?v=67"></script>
+    <script src="js/app.js?v=68"></script>
 
     <script>
         // タブを閉じる/ページ遷移時にリソースだけ解放（UI操作は不要）
