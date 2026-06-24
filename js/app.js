@@ -49,6 +49,7 @@ class ComChat {
         this.mixedAudioTrack = null;
         this.mixSources = [];
         this.isLeaving = false;
+        this.isReconnecting = false;
         this.unreadCount = 0;
         this.isChatVisible = true;
         this.chatObserver = null;
@@ -309,6 +310,7 @@ class ComChat {
 
     async initializePeer(id = null) {
         this.isLeaving = false;
+        this.isReconnecting = false;
         return new Promise((resolve, reject) => {
             this.peer = new Peer(id, { debug: 0 });
 
@@ -369,18 +371,23 @@ class ComChat {
         // but new peers can't join until we reconnect with the same ID.
         this.peer.on('disconnected', () => {
             if (this.isLeaving || !this.peer || this.peer.destroyed) return;
+            // Guard against parallel retry chains if 'disconnected' fires repeatedly
+            if (this.isReconnecting) return;
+            this.isReconnecting = true;
             this.showStatus('接続が不安定です。再接続中...', 'connecting');
             this.attemptReconnect(0);
         });
     }
 
     attemptReconnect(n) {
-        if (this.isLeaving || !this.peer || this.peer.destroyed) return;
+        if (this.isLeaving || !this.peer || this.peer.destroyed) { this.isReconnecting = false; return; }
         if (!this.peer.disconnected) {
+            this.isReconnecting = false;
             this.showStatus('再接続しました', 'connected');
             return;
         }
         if (n >= 5) {
+            this.isReconnecting = false;
             this.showStatus('サーバーに再接続できませんでした', 'error');
             return;
         }
@@ -641,7 +648,9 @@ class ComChat {
             case 'file-chunk':
                 if (this.receivingFiles.has(data.id)) {
                     const tf = this.receivingFiles.get(data.id);
-                    if (!tf.chunks[data.index]) tf.received++;
+                    // Use === undefined (not falsy): an empty 0-byte chunk is '' and
+                    // must count as received, otherwise empty files report false loss.
+                    if (tf.chunks[data.index] === undefined) tf.received++;
                     tf.chunks[data.index] = data.data;
                     this.updateFileProgress(tf.progress, Math.round(tf.received / tf.meta.totalChunks * 100));
                 }
@@ -654,7 +663,7 @@ class ComChat {
                 let missing = 0;
                 const buffers = [];
                 for (let i = 0; i < meta.totalChunks; i++) {
-                    if (!chunks[i]) { missing++; continue; }
+                    if (chunks[i] === undefined) { missing++; continue; }
                     const bin = atob(chunks[i]);
                     const buf = new Uint8Array(bin.length);
                     for (let j = 0; j < bin.length; j++) buf[j] = bin.charCodeAt(j);
@@ -1890,20 +1899,28 @@ class ComChat {
                 this.precallNoCamera.querySelector('span').textContent = 'カメラを起動できませんでした';
             }
         }, 5000);
-        this.precallPreview.addEventListener('loadeddata', () => {
+        // Keep a reference so a cancel/confirm before 'loadeddata' fires can detach
+        // the once-listener (otherwise it accumulates across open/cancel cycles).
+        this._precallLoadedHandler = () => {
             clearTimeout(this._noCameraTimeout);
             this._noCameraTimeout = null;
+            this._precallLoadedHandler = null;
             const videoTrack = this.localStream?.getVideoTracks()[0];
             if (!videoTrack || videoTrack.enabled) {
                 this.precallNoCamera.classList.add('hidden');
             }
-        }, { once: true });
+        };
+        this.precallPreview.addEventListener('loadeddata', this._precallLoadedHandler, { once: true });
 
         this.precallDialog.classList.remove('hidden');
     }
 
     cancelPreCall() {
         if (this._noCameraTimeout) { clearTimeout(this._noCameraTimeout); this._noCameraTimeout = null; }
+        if (this._precallLoadedHandler) {
+            this.precallPreview.removeEventListener('loadeddata', this._precallLoadedHandler);
+            this._precallLoadedHandler = null;
+        }
         this.precallDialog.classList.add('hidden');
         this.filterPanel.classList.add('hidden');
         if (this.bgImagePanel) this.bgImagePanel.classList.add('hidden');
@@ -1940,6 +1957,10 @@ class ComChat {
 
     async confirmPreCall() {
         if (this._noCameraTimeout) { clearTimeout(this._noCameraTimeout); this._noCameraTimeout = null; }
+        if (this._precallLoadedHandler) {
+            this.precallPreview.removeEventListener('loadeddata', this._precallLoadedHandler);
+            this._precallLoadedHandler = null;
+        }
         const action = this.precallAction;
         this.precallAction = null;
         this.precallDialog.classList.add('hidden');
@@ -1986,6 +2007,7 @@ class ComChat {
 
     hangup() {
         this.isLeaving = true;
+        this.isReconnecting = false;
         if (this.currentScreenStream) this.stopScreenShare();
         this.teardownMixedAudio();
 
