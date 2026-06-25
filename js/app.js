@@ -178,10 +178,16 @@ class ComChat {
             const option = e.target.closest('.filter-option');
             if (!option) return;
             this.filterPanel.classList.add('hidden');
-            if (option.dataset.filter === 'image') {
+            const filter = option.dataset.filter;
+            // 非対応端末ではフィルターを起動せずメッセージ表示(blur/image両方の入口でガード)
+            if (filter !== 'none' && this.bgFilterType === 'none' && !this.canUseBgFilter()) {
+                this.showStatus('この端末では背景フィルターを使えません', 'error');
+                return;
+            }
+            if (filter === 'image') {
                 this.showBgImagePanel();
             } else {
-                this.applyBgFilter(option.dataset.filter);
+                this.applyBgFilter(filter);
             }
         });
         this.initBgImagePanel();
@@ -827,9 +833,19 @@ class ComChat {
         }
     }
 
+    // モバイル(≤768px)はボトムシート(.open=表示)、PC/タブレット横向き(≥769px)は
+    // 右カラム常時表示で .collapsed=非表示。レイアウトで開閉の極性が逆なので判定を分ける。
+    isChatCurrentlyOpen() {
+        if (!this.chatContainer) return false;
+        if (window.matchMedia('(max-width: 768px)').matches) {
+            return this.chatContainer.classList.contains('open');
+        }
+        return !this.chatContainer.classList.contains('collapsed');
+    }
+
     toggleChat() {
         if (!this.chatContainer) return;
-        if (this.chatContainer.classList.contains('open')) {
+        if (this.isChatCurrentlyOpen()) {
             this.closeChat();
         } else {
             this.openChat();
@@ -839,6 +855,7 @@ class ComChat {
     openChat() {
         if (!this.chatContainer) return;
         this.chatContainer.classList.add('open');
+        this.chatContainer.classList.remove('collapsed');
         this.isChatVisible = true;
         this.clearUnreadBadge();
         this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
@@ -847,6 +864,7 @@ class ComChat {
     closeChat() {
         if (!this.chatContainer) return;
         this.chatContainer.classList.remove('open');
+        this.chatContainer.classList.add('collapsed');
         this.isChatVisible = false;
     }
 
@@ -1684,6 +1702,16 @@ class ComChat {
             return;
         }
 
+        // 非対応端末では起動を中止(画像プリセット経由など、パネルのガードを通らない呼び出しの保険)
+        if (!wasActive && !this.canUseBgFilter()) {
+            this.bgFilterType = 'none';
+            this.filterPanel.querySelectorAll('.filter-option').forEach(el =>
+                el.classList.toggle('active', el.dataset.filter === 'none'));
+            this.syncFilterBtnState();
+            this.showStatus('この端末では背景フィルターを使えません', 'error');
+            return;
+        }
+
         if (wasActive) {
             // CSS-only fallback: no canvas, update style.filter directly
             if (!this.bgFilterCanvas) {
@@ -1858,6 +1886,30 @@ class ComChat {
         const isActive = this.bgFilterType !== 'none';
         this.bgFilterBtn.classList.toggle('active', isActive);
         if (this.precallFilterBtn) this.precallFilterBtn.classList.toggle('active', isActive);
+    }
+
+    // 背景フィルター(人物セグメンテーション)が実用的に動く端末か判定する。
+    // 非対応GPU(WebGL2非対応 / ソフトウェアレンダラ / HD Graphics 3000等の旧Intel GPU)では
+    // ・CPUフォールバックが同期処理でメインスレッドを固める(例: 2011 MacBook Air)
+    // ・マスクが破綻して人物が消える(例: iPad 2)
+    // ため、機能自体を無効化する。結果はメモ化(canvas生成を毎回避ける)。
+    canUseBgFilter() {
+        if (this._bgFilterSupported !== undefined) return this._bgFilterSupported;
+        let ok = false;
+        try {
+            const c = document.createElement('canvas');
+            const gl = c.getContext('webgl2');
+            if (gl) {
+                const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+                const renderer = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : '';
+                const weak = /swiftshader|software|llvmpipe|basic render|hd graphics (2000|3000)|gma\b|x3100|945|965/i.test(renderer);
+                ok = !weak;
+            }
+        } catch {
+            ok = false;
+        }
+        this._bgFilterSupported = ok;
+        return ok;
     }
 
     async showPreCallDialog(action) {

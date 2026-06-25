@@ -430,9 +430,9 @@ body {
     cursor: pointer;
 }
 
-/* チャットトグルボタンの未読バッジ（PCでは非表示、モバイルのみ表示） */
+/* チャットトグルボタン（PC/タブレット/モバイルすべてで表示。PCでは右カラムの開閉に使う） */
 .ctrl-item-chat {
-    display: none;
+    display: flex;
 }
 
 .chat-btn {
@@ -1030,6 +1030,28 @@ body {
 }
 
 /* Responsive design */
+/* PC・タブレット横向き(≥769px): チャットは右カラム常時表示。トグルボタンで開閉でき、
+   閉じると右カラムが畳まれて映像が広がる(.collapsed)。モバイルのボトムシートとは別系統。 */
+@media (min-width: 769px) {
+    .chat-container {
+        transition: width 0.2s ease;
+    }
+    .chat-container.collapsed {
+        width: 0;
+        min-width: 0;
+        padding: 0;
+        border-width: 0;
+        overflow: hidden;
+    }
+}
+
+/* タブレット幅では右カラムをやや狭めて映像スペースを確保 */
+@media (min-width: 769px) and (max-width: 1024px) {
+    .chat-container:not(.collapsed) {
+        width: 260px;
+    }
+}
+
 @media (max-width: 768px) {
     .welcome-screen {
         padding: 20px 0 32px;
