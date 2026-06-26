@@ -233,6 +233,7 @@ body {
     padding: 5px 10px;
     border-radius: 5px;
     font-size: 0.9em;
+    z-index: 5;
 }
 
 .video-center-name {
@@ -374,10 +375,11 @@ body {
 
 .call-layout {
     display: flex;
-    gap: 16px;
+    gap: 0;
     align-items: stretch;
     flex: 1;
     overflow: hidden;
+    position: relative;
 }
 
 .call-main {
@@ -437,6 +439,14 @@ body {
 
 .chat-btn {
     position: relative;
+}
+
+.chat-btn svg {
+    transition: transform 0.15s ease;
+}
+
+.chat-btn.has-unread svg {
+    transform: scale(0.82);
 }
 
 .chat-toggle-badge {
@@ -1029,25 +1039,42 @@ body {
     gap: 10px;
 }
 
+.precall-status-msg {
+    margin: 0;
+    padding: 8px 12px;
+    background: #fff3cd;
+    border: 1px solid #ffc107;
+    border-radius: 6px;
+    color: #856404;
+    font-size: 0.85em;
+    text-align: center;
+    line-height: 1.4;
+}
+
 /* Responsive design */
-/* PC・タブレット横向き(≥769px): チャットは右カラム常時表示。トグルボタンで開閉でき、
-   閉じると右カラムが畳まれて映像が広がる(.collapsed)。モバイルのボトムシートとは別系統。 */
+/* PC・タブレット横向き(≥769px): チャットは映像の上にオーバーレイ表示（Zoomスタイル）。
+   映像エリアは常に全幅。.collapsed でチャットが右外にスライドアウト。 */
 @media (min-width: 769px) {
     .chat-container {
-        transition: width 0.2s ease;
+        position: absolute;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        width: 300px;
+        z-index: 50;
+        box-shadow: -4px 0 16px rgba(0, 0, 0, 0.18);
+        transition: transform 0.25s ease;
+        transform: translateX(0);
     }
     .chat-container.collapsed {
-        width: 0;
-        min-width: 0;
-        padding: 0;
-        border-width: 0;
-        overflow: hidden;
+        transform: translateX(100%);
+        pointer-events: none;
     }
 }
 
-/* タブレット幅では右カラムをやや狭めて映像スペースを確保 */
+/* タブレット幅ではチャット幅をやや狭める */
 @media (min-width: 769px) and (max-width: 1024px) {
-    .chat-container:not(.collapsed) {
+    .chat-container {
         width: 260px;
     }
 }
@@ -1074,8 +1101,9 @@ body {
     }
 
     /* 案A: モバイルは映像を主役にし、チャットはボトムシートで開閉 */
+    /* 幅560px未満（スマホ）は1列、560px以上（タブレット縦向き等）は2列 */
     .video-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
         grid-auto-rows: max-content;
         flex: 1 1 auto;
         min-height: 0;

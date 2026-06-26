@@ -181,7 +181,12 @@ class ComChat {
             const filter = option.dataset.filter;
             // 非対応端末ではフィルターを起動せずメッセージ表示(blur/image両方の入口でガード)
             if (filter !== 'none' && this.bgFilterType === 'none' && !this.canUseBgFilter()) {
-                this.showStatus('この端末では背景フィルターを使えません', 'error');
+                const inPrecall = this.precallDialog && !this.precallDialog.classList.contains('hidden');
+                if (inPrecall) {
+                    this.showPrecallStatus('この端末では背景フィルターを使えません');
+                } else {
+                    this.showStatus('この端末では背景フィルターを使えません', 'error');
+                }
                 return;
             }
             if (filter === 'image') {
@@ -213,6 +218,10 @@ class ComChat {
         this.precallAudioBtn.addEventListener('click', () => this.precallToggleAudio());
         this.precallFilterBtn.addEventListener('click', (e) => {
             e.stopPropagation();
+            if (!this.canUseBgFilter()) {
+                this.showPrecallStatus('この端末では背景フィルターを使えません');
+                return;
+            }
             if (this.bgImagePanel) this.bgImagePanel.classList.add('hidden');
             const isHidden = this.filterPanel.classList.contains('hidden');
             if (!isHidden) { this.filterPanel.classList.add('hidden'); return; }
@@ -818,6 +827,7 @@ class ComChat {
         if (this.chatToggleBadge) {
             this.chatToggleBadge.textContent = label;
             this.chatToggleBadge.classList.remove('hidden');
+            this.chatToggleBadge.closest('.chat-btn')?.classList.add('has-unread');
         }
     }
 
@@ -830,6 +840,7 @@ class ComChat {
         if (this.chatToggleBadge) {
             this.chatToggleBadge.classList.add('hidden');
             this.chatToggleBadge.textContent = '';
+            this.chatToggleBadge.closest('.chat-btn')?.classList.remove('has-unread');
         }
     }
 
@@ -1708,7 +1719,12 @@ class ComChat {
             this.filterPanel.querySelectorAll('.filter-option').forEach(el =>
                 el.classList.toggle('active', el.dataset.filter === 'none'));
             this.syncFilterBtnState();
-            this.showStatus('この端末では背景フィルターを使えません', 'error');
+            const inPrecall = this.precallDialog && !this.precallDialog.classList.contains('hidden');
+            if (inPrecall) {
+                this.showPrecallStatus('この端末では背景フィルターを使えません');
+            } else {
+                this.showStatus('この端末では背景フィルターを使えません', 'error');
+            }
             return;
         }
 
@@ -1895,21 +1911,36 @@ class ComChat {
     // ため、機能自体を無効化する。結果はメモ化(canvas生成を毎回避ける)。
     canUseBgFilter() {
         if (this._bgFilterSupported !== undefined) return this._bgFilterSupported;
-        let ok = false;
+        this._bgFilterSupported = false;
         try {
             const c = document.createElement('canvas');
             const gl = c.getContext('webgl2');
-            if (gl) {
-                const dbg = gl.getExtension('WEBGL_debug_renderer_info');
-                const renderer = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : '';
+            if (!gl) return false; // WebGL2非対応（iPad2/iOS9等）
+            const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+            if (dbg) {
+                const renderer = String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL));
                 const weak = /swiftshader|software|llvmpipe|basic render|hd graphics (2000|3000)|gma\b|x3100|945|965/i.test(renderer);
-                ok = !weak;
+                if (weak) return false;
             }
+            // デバッグ情報非公開の場合（Safariプライバシー保護等）はテクスチャサイズで判定
+            // 2048以下は旧世代GPU
+            const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+            if (maxTex < 2048) return false;
+            this._bgFilterSupported = true;
         } catch {
-            ok = false;
+            this._bgFilterSupported = false;
         }
-        this._bgFilterSupported = ok;
-        return ok;
+        return this._bgFilterSupported;
+    }
+
+    // プリコールダイアログ内にステータスメッセージを表示（3秒後に自動消去）
+    showPrecallStatus(msg) {
+        const el = document.getElementById('precall-status-msg');
+        if (!el) return;
+        el.textContent = msg;
+        el.classList.remove('hidden');
+        clearTimeout(this._precallStatusTimer);
+        this._precallStatusTimer = setTimeout(() => el.classList.add('hidden'), 3000);
     }
 
     async showPreCallDialog(action) {
