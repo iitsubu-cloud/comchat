@@ -441,12 +441,10 @@ body {
     position: relative;
 }
 
-.chat-btn svg {
-    transition: transform 0.15s ease;
-}
-
-.chat-btn.has-unread svg {
-    transform: scale(0.82);
+/* 未読バッジ(.chat-toggle-badge)はボタン外側に飛び出すため overflow:hidden を打ち消す。
+   後方の .control-btn{overflow:hidden} に勝つよう詳細度を上げる(.control-btn.chat-btn)。 */
+.control-btn.chat-btn {
+    overflow: visible;
 }
 
 .chat-toggle-badge {
@@ -1052,23 +1050,32 @@ body {
 }
 
 /* Responsive design */
-/* PC・タブレット横向き(≥769px): チャットは映像の上にオーバーレイ表示（Zoomスタイル）。
-   映像エリアは常に全幅。.collapsed でチャットが右外にスライドアウト。 */
+/* PC・タブレット横向き(≥769px): チャットは映像と横並び（ドッキング/Zoomスタイル）。
+   開くと映像エリアが縮んで詰まり、チャットと重ならない。.collapsed で幅0に畳む。 */
 @media (min-width: 769px) {
     .chat-container {
-        position: absolute;
-        right: 0;
-        top: 0;
-        bottom: 0;
-        width: 300px;
-        z-index: 50;
-        box-shadow: -4px 0 16px rgba(0, 0, 0, 0.18);
-        transition: transform 0.25s ease;
-        transform: translateX(0);
+        width: 320px;
+        margin-left: 12px;
+        flex-shrink: 0;
+        transition: width 0.25s ease, margin-left 0.25s ease;
     }
     .chat-container.collapsed {
-        transform: translateX(100%);
+        width: 0;
+        margin-left: 0;
+        border-width: 0;
         pointer-events: none;
+    }
+    /* 映像タイルは利用可能な高さに収め、名前ラベル(下端)が見切れないようにする。
+       aspect-ratio固定をやめ、グリッド行(1fr)で高さを分配してセルを埋める。 */
+    .video-grid {
+        flex: 1 1 0;
+        min-height: 0;
+        grid-auto-rows: 1fr;
+    }
+    .video-container {
+        aspect-ratio: auto;
+        height: 100%;
+        min-height: 0;
     }
 }
 

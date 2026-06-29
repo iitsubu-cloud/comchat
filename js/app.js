@@ -108,7 +108,8 @@ class ComChat {
         this.editUsernameBtn.addEventListener('click', () => this.startEditUsername());
         this.usernameConfirmBtn.addEventListener('click', () => this.confirmEditUsername());
         this.usernameEditInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') this.confirmEditUsername();
+            // IME変換確定のEnterで確定させない（チャット欄と同様の対策）
+            if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) this.confirmEditUsername();
             else if (e.key === 'Escape') this.exitUsernameEdit();
         });
 
@@ -131,7 +132,9 @@ class ComChat {
         });
         this.chatSendBtn.addEventListener('click', () => this.sendMessage());
         this.chatInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') this.sendMessage();
+            // IME変換確定のEnter(isComposing / 旧Safariの keyCode 229)は送信しない。
+            // これを送信すると古い端末でテキストが残り、再Enterで重複送信になる。
+            if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) this.sendMessage();
         });
         this.hangupModal = document.getElementById('hangup-modal');
         this.hangupConfirmBtn = document.getElementById('hangup-confirm');
@@ -2181,6 +2184,10 @@ class ComChat {
     showCallScreen() {
         this.welcomeScreen.classList.add('hidden');
         this.callScreen.classList.remove('hidden');
+        // 通話開始時はチャットを閉じた状態に（映像を全幅で表示。PC/モバイル共通）
+        this.chatContainer?.classList.remove('open');
+        this.chatContainer?.classList.add('collapsed');
+        this.isChatVisible = false;
         // Sync button states from pre-call settings
         this.toggleAudioBtn.classList.toggle('off', this.isAudioMuted);
         const videoTrack = this.localStream?.getVideoTracks()[0];
