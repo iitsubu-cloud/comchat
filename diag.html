@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ComChat 端末診断</title>
+    <style>
+        body { font-family: -apple-system, sans-serif; margin: 0; padding: 20px; background: #f4f4f8; color: #222; }
+        h1 { font-size: 1.3em; }
+        .card { background: #fff; border-radius: 12px; padding: 16px 18px; margin: 14px 0; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+        .label { font-size: .85em; color: #666; }
+        .value { font-size: 1.1em; font-weight: 700; word-break: break-all; margin-top: 4px; }
+        .verdict { font-size: 1.2em; font-weight: 700; padding: 16px; border-radius: 12px; text-align: center; }
+        .ok { background: #d4edda; color: #155724; }
+        .ng { background: #f8d7da; color: #721c24; }
+    </style>
+</head>
+<body>
+    <h1>💬 ComChat 端末診断</h1>
+    <p>背景フィルターが使えるか判定するための値を表示します。この画面の内容を伝えてください。</p>
+    <div id="out"></div>
+
+    <script>
+    (function () {
+        const out = document.getElementById('out');
+        function card(label, value) {
+            const d = document.createElement('div');
+            d.className = 'card';
+            d.innerHTML = '<div class="label">' + label + '</div><div class="value">' + value + '</div>';
+            out.appendChild(d);
+        }
+        const info = {};
+        let canFilter = false;
+        try {
+            const c = document.createElement('canvas');
+            const gl = c.getContext('webgl2');
+            if (!gl) {
+                info.webgl2 = 'なし (NONE)';
+                info.renderer = '-';
+                info.maxTex = '-';
+            } else {
+                info.webgl2 = 'あり (OK)';
+                const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+                info.renderer = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : '(非公開 / hidden)';
+                info.maxTex = String(gl.getParameter(gl.MAX_TEXTURE_SIZE));
+                const weak = /swiftshader|software|llvmpipe|basic render|hd graphics (2000|3000)|gma\b|x3100|945|965/i.test(info.renderer);
+                canFilter = !weak && (parseInt(info.maxTex, 10) >= 2048);
+            }
+        } catch (e) {
+            info.webgl2 = 'エラー: ' + e;
+            info.renderer = '-';
+            info.maxTex = '-';
+        }
+        info.cores = navigator.hardwareConcurrency || '(不明)';
+        info.deviceMemory = navigator.deviceMemory || '(取得不可)';
+        info.ua = navigator.userAgent;
+
+        const v = document.createElement('div');
+        v.className = 'verdict ' + (canFilter ? 'ok' : 'ng');
+        v.textContent = canFilter
+            ? '判定: フィルター「使える」と認識 (現状の canUseBgFilter = true)'
+            : '判定: フィルター「使えない」と認識 (現状の canUseBgFilter = false)';
+        out.appendChild(v);
+
+        card('WebGL2', info.webgl2);
+        card('GPU renderer', info.renderer);
+        card('MAX_TEXTURE_SIZE', info.maxTex);
+        card('CPUコア数 (hardwareConcurrency)', info.cores);
+        card('deviceMemory(GB)', info.deviceMemory);
+        card('UserAgent', info.ua);
+    })();
+    </script>
+</body>
+</html>
