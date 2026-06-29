@@ -779,6 +779,7 @@ class ComChat {
         videoContainer.appendChild(centerName);
         this.videoGrid.appendChild(videoContainer);
         video.play().catch(() => {});
+        this.relayoutVideoGrid();
     }
 
     removeVideoElement(id) {
@@ -788,6 +789,37 @@ class ComChat {
             if (video) video.srcObject = null;
             videoElement.remove();
         }
+        this.relayoutVideoGrid();
+    }
+
+    // PC・横向きiPad(≥769px)で、映像タイルを常に16:9に保ちつつ画面内に最大サイズで収める。
+    // 列数とタイル幅を「縦横どちらにも収まる最大の16:9」になるよう算出する(Zoom方式)。
+    // モバイル/プレゼンターモードはCSS側に任せる(インラインスタイルを除去)。
+    relayoutVideoGrid() {
+        const grid = this.videoGrid;
+        if (!grid) return;
+        const wide = window.matchMedia('(min-width: 769px)').matches;
+        const presenter = grid.closest('.call-main')?.classList.contains('presenter-mode');
+        const tiles = grid.querySelectorAll('.video-container');
+        if (!wide || presenter || tiles.length === 0) {
+            grid.style.gridTemplateColumns = '';
+            grid.style.removeProperty('--vg-tile');
+            return;
+        }
+        const N = tiles.length;
+        const gap = 12;
+        const W = grid.clientWidth, H = grid.clientHeight;
+        if (W <= 0 || H <= 0) return;
+        let best = 0, bestCols = 1;
+        for (let cols = 1; cols <= N; cols++) {
+            const rows = Math.ceil(N / cols);
+            const cw = (W - gap * (cols - 1)) / cols;
+            const ch = (H - gap * (rows - 1)) / rows;
+            const w = Math.max(0, Math.min(cw, ch * 16 / 9));
+            if (w > best) { best = w; bestCols = cols; }
+        }
+        grid.style.gridTemplateColumns = `repeat(${bestCols}, auto)`;
+        grid.style.setProperty('--vg-tile', Math.floor(best) + 'px');
     }
 
     sendMessage() {
@@ -873,6 +905,7 @@ class ComChat {
         this.isChatVisible = true;
         this.clearUnreadBadge();
         this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+        this.relayoutVideoGrid();
     }
 
     closeChat() {
@@ -880,6 +913,7 @@ class ComChat {
         this.chatContainer.classList.remove('open');
         this.chatContainer.classList.add('collapsed');
         this.isChatVisible = false;
+        this.relayoutVideoGrid();
     }
 
     async sendFile(file) {
@@ -2184,16 +2218,30 @@ class ComChat {
     showCallScreen() {
         this.welcomeScreen.classList.add('hidden');
         this.callScreen.classList.remove('hidden');
-        // 通話開始時はチャットを閉じた状態に（映像を全幅で表示。PC/モバイル共通）
-        this.chatContainer?.classList.remove('open');
-        this.chatContainer?.classList.add('collapsed');
-        this.isChatVisible = false;
+        // 通話開始時のチャット初期状態:
+        //  PC・横向きiPad(≥769px)は開いた状態、モバイル(≤768px)はボトムシートを閉じた状態。
+        const wideScreen = window.matchMedia('(min-width: 769px)').matches;
+        if (wideScreen) {
+            this.chatContainer?.classList.remove('collapsed');
+            this.chatContainer?.classList.add('open');
+            this.isChatVisible = true;
+        } else {
+            this.chatContainer?.classList.remove('open');
+            this.chatContainer?.classList.add('collapsed');
+            this.isChatVisible = false;
+        }
         // Sync button states from pre-call settings
         this.toggleAudioBtn.classList.toggle('off', this.isAudioMuted);
         const videoTrack = this.localStream?.getVideoTracks()[0];
         this.toggleVideoBtn.classList.toggle('off', videoTrack ? !videoTrack.enabled : false);
         this.bgFilterBtn.classList.toggle('active', this.bgFilterType !== 'none');
         if (this.chatObserver) this.chatObserver.observe(this.chatMessages);
+        // 映像グリッドのサイズ変化(チャット開閉アニメ・ウィンドウリサイズ等)に追従して再レイアウト
+        if (!this._gridResizeObserver && window.ResizeObserver) {
+            this._gridResizeObserver = new ResizeObserver(() => this.relayoutVideoGrid());
+            this._gridResizeObserver.observe(this.videoGrid);
+        }
+        this.relayoutVideoGrid();
     }
 
     showStatus(message, type) {

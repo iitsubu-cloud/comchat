@@ -1065,16 +1065,22 @@ body {
         border-width: 0;
         pointer-events: none;
     }
-    /* 映像タイルは利用可能な高さに収め、名前ラベル(下端)が見切れないようにする。
-       aspect-ratio固定をやめ、グリッド行(1fr)で高さを分配してセルを埋める。 */
+    /* 映像タイルは常に16:9を維持。列数とタイル幅(--vg-tile)はJS(relayoutVideoGrid)が
+       「縦横どちらにも収まる最大の16:9」になるよう算出し、中央寄せで配置する。
+       これによりチャット開閉や人数変化でも映像の切り取り(アスペクト比)が一定に保たれる。 */
     .video-grid {
         flex: 1 1 0;
         min-height: 0;
-        grid-auto-rows: 1fr;
+        grid-auto-rows: auto;
+        place-content: center;
+        align-items: center;
+        justify-items: center;
     }
     .video-container {
-        aspect-ratio: auto;
-        height: 100%;
+        aspect-ratio: 16 / 9;
+        width: var(--vg-tile, 100%);
+        height: auto;
+        max-width: 100%;
         min-height: 0;
     }
 }
