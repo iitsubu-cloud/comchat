@@ -455,8 +455,38 @@ class ComChat {
         this.addVideoElement('local', displayStream, this.username);
     }
 
-    async connectToHost(hostId) {
-        this.connectToPeer(hostId);
+    // ホストへの参加時は、データ接続が実際に開くまで待つ。開かなければ reject し、
+    // joinRoom 側の catch がウェルカム画面へ戻してエラー表示する。
+    // これがないと、ルームID誤入力やホスト退出済みでも通話画面に遷移し、
+    // 誰もいない部屋に取り残される(撃ちっぱなしで接続成立を待っていなかった)。
+    connectToHost(hostId) {
+        return new Promise((resolve, reject) => {
+            if (this.connections.has(hostId)) { resolve(); return; }
+            const conn = this.peer.connect(hostId);
+            let settled = false;
+            const timer = setTimeout(() => {
+                if (settled) return;
+                settled = true;
+                try { conn.close(); } catch {}
+                reject(new Error('ルームが見つかりませんでした。ルームIDをご確認ください'));
+            }, 10000);
+            // handleConnection も別途 'open' を登録するが(user-join送信等)、複数リスナーは併存可
+            conn.on('open', () => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                resolve();
+            });
+            this.handleConnection(conn);
+            // 容量超過等で handleConnection が conn を登録しなかった場合は発信しない
+            if (!this.connections.has(hostId)) {
+                if (!settled) { settled = true; clearTimeout(timer); }
+                resolve();
+                return;
+            }
+            const call = this.peer.call(hostId, this.getOutgoingStream());
+            this.handleCall(call);
+        });
     }
 
     connectToPeer(peerId) {
@@ -868,7 +898,6 @@ class ComChat {
         if (this.chatToggleBadge) {
             this.chatToggleBadge.textContent = label;
             this.chatToggleBadge.classList.remove('hidden');
-            this.chatToggleBadge.closest('.chat-btn')?.classList.add('has-unread');
         }
     }
 
@@ -881,7 +910,6 @@ class ComChat {
         if (this.chatToggleBadge) {
             this.chatToggleBadge.classList.add('hidden');
             this.chatToggleBadge.textContent = '';
-            this.chatToggleBadge.closest('.chat-btn')?.classList.remove('has-unread');
         }
     }
 
