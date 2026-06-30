@@ -2326,6 +2326,12 @@ class ComChat {
     showCallScreen() {
         this.welcomeScreen.classList.add('hidden');
         this.callScreen.classList.remove('hidden');
+        // 入室時にページスクロールを先頭へ戻す。参加前にルームID入力欄へフォーカスすると
+        // confirmJoinBtnへscrollIntoViewした分のスクロールが残り、通話画面でヘッダーが
+        // 画面外(上)へずれる問題があるため。あわせてキーボードも閉じる(iOS)。
+        if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+        window.scrollTo(0, 0);
+        requestAnimationFrame(() => window.scrollTo(0, 0));
         // 通話開始時のチャット初期状態:
         //  PC・横向きiPad(≥769px)は開いた状態、モバイル(≤768px)はボトムシートを閉じた状態。
         const wideScreen = window.matchMedia('(min-width: 769px)').matches;
