@@ -41,14 +41,8 @@ class ComChat {
         this._segFilterStartT = null;   // フィルター起動時刻(ウォームアップ計測用)
         this._segDegenStart = null;     // 破綻状態が連続し始めた時刻
         this._segHealthySeen = false;   // 起動後に一度でも人物が正常分離できたか
-        this._motionCanvas = null;      // 動き検出用の小さなオフスクリーン
-        this._motionCtx = null;
-        this._motionPrev = null;        // 前フレームの輝度(動き検出)
         this._bgFilterAutoDisableCount = 0;  // セッション内の自動オフ回数
         this._bgFilterRuntimeBlocked = false; // 2回検知後はそのセッション無効で確定
-        this._segDebug = /[?&]segdebug=1/.test(location.search); // ライブ計測オーバーレイ
-        this._segDebugEl = null;
-        this._segFrames = 0;
         this.bgImage = null;
         this.bgPresets = {};
         this.bgHistory = [];
@@ -1529,13 +1523,6 @@ class ComChat {
     }
 
     onSegmentationResults(result, sourceImage) {
-        if (this._segDebug) {
-            this._segEntryCount = (this._segEntryCount || 0) + 1;
-            const masks = result?.confidenceMasks?.length;
-            if (!this._segDebugEl || this._segEntryCount <= 3) {
-                this.updateSegDebug(`entry#${this._segEntryCount} masks=${masks}`);
-            }
-        }
         if (this.bgFilterType === 'none' || !this.bgFilterCtx) { result.close?.(); return; }
         const ctx = this.bgFilterCtx;
         const w = this.bgFilterCanvas.width;
@@ -1558,8 +1545,8 @@ class ComChat {
         this.maskCtx.putImageData(this.maskImageData, 0, 0);
         result.close?.();
 
-        // 破綻検知: 「人物がほぼ0%」かつ「人は実際にいる(動きあり)」が継続したら自動オフ
-        this.checkSegmentationHealth(personCount / maskData.length, sourceImage);
+        // 破綻検知: 「人物がほぼ0%」かつ「起動後一度も正常分離せず」が継続したら自動オフ
+        this.checkSegmentationHealth(personCount / maskData.length);
 
         // Scale-down/up smoothing softens jagged mask boundaries
         const mw = this.maskSmallCanvas.width, mh = this.maskSmallCanvas.height;
@@ -1644,91 +1631,26 @@ class ComChat {
     static get SEG_DEGEN_RATIO() { return 0.005; } // 人物がこの割合未満なら「ほぼ0%」
     static get SEG_HEALTHY_RATIO() { return 0.08; }// 一度でもこの割合に達したら正常実績あり
 
-    // 生カメラの動き(フレーム間の平均輝度差)を返す。人が席を外しただけ(静止)と、
-    // 人がいるのにマスクが破綻している状態を区別するために使う。
-    detectMotion(sourceImage) {
-        try {
-            if (!this._motionCanvas) {
-                this._motionCanvas = document.createElement('canvas');
-                this._motionCanvas.width = 32;
-                this._motionCanvas.height = 24;
-                this._motionCtx = this._motionCanvas.getContext('2d', { willReadFrequently: true });
-                this._motionPrev = null;
-            }
-            const mc = this._motionCtx, W = 32, H = 24;
-            mc.drawImage(sourceImage, 0, 0, W, H);
-            const data = mc.getImageData(0, 0, W, H).data;
-            const n = W * H;
-            const cur = new Uint8Array(n);
-            for (let i = 0; i < n; i++) {
-                // 輝度 = 0.299R+0.587G+0.114B の近似
-                cur[i] = (data[i * 4] * 77 + data[i * 4 + 1] * 150 + data[i * 4 + 2] * 29) >> 8;
-            }
-            let motion = 0;
-            if (this._motionPrev && this._motionPrev.length === n) {
-                let sum = 0;
-                for (let i = 0; i < n; i++) sum += Math.abs(cur[i] - this._motionPrev[i]);
-                motion = sum / n;
-            }
-            this._motionPrev = cur;
-            return motion;
-        } catch {
-            // 取得できない場合は「動きあり」とみなさない(誤って席外しを止めないため0を返す)
-            return 0;
-        }
-    }
-
     // セグメンテーションが破綻していないか毎フレーム監視する。
-    // 「人物 ≈ 0%」かつ「動きあり(人はいる)」かつ「起動後に一度も正常分離していない」が
-    // ウォームアップ後に一定時間続いたら、フィルターを自動的にオフにする。
-    checkSegmentationHealth(personRatio, sourceImage) {
+    // 「人物 ≈ 0%」かつ「起動後に一度も正常分離していない」がウォームアップ後に
+    // 一定時間続いたら、フィルターを自動的にオフにする(Air2等の対策)。
+    // 会議途中の席外しは離席前に healthySeen=true になるため発動しない。
+    checkSegmentationHealth(personRatio) {
         const now = performance.now();
         if (this._segFilterStartT == null) this._segFilterStartT = now;
-        const warm = now - this._segFilterStartT < ComChat.SEG_WARMUP_MS; // 起動直後は判定しない
-        const motion = this.detectMotion(sourceImage); // HUD表示用(Air2では常に0になり判定には使えない)
-        let degenerate = false;
-        if (!warm) {
-            if (personRatio >= ComChat.SEG_HEALTHY_RATIO) this._segHealthySeen = true;
-            // 「人物ほぼ0%」かつ「起動後一度も正常分離していない」が継続したら破綻。
-            // 席外し(会議途中)は離席前に healthySeen=true になるため発動しない。
-            degenerate = personRatio < ComChat.SEG_DEGEN_RATIO
-                && !this._segHealthySeen;
-            if (degenerate) {
-                if (this._segDegenStart == null) {
-                    this._segDegenStart = now;
-                } else if (now - this._segDegenStart >= ComChat.SEG_SUSTAIN_MS) {
-                    this.handleBgFilterBreakage();
-                }
-            } else {
-                this._segDegenStart = null;
+        // 起動直後(モデル初期化中)はまだ判定しない
+        if (now - this._segFilterStartT < ComChat.SEG_WARMUP_MS) return;
+        if (personRatio >= ComChat.SEG_HEALTHY_RATIO) this._segHealthySeen = true;
+        const degenerate = personRatio < ComChat.SEG_DEGEN_RATIO && !this._segHealthySeen;
+        if (degenerate) {
+            if (this._segDegenStart == null) {
+                this._segDegenStart = now;
+            } else if (now - this._segDegenStart >= ComChat.SEG_SUSTAIN_MS) {
+                this.handleBgFilterBreakage();
             }
+        } else {
+            this._segDegenStart = null;
         }
-        if (this._segDebug) {
-            this._segFrames++;
-            const hold = this._segDegenStart ? Math.round(now - this._segDegenStart) : 0;
-            this.updateSegDebug(
-                `#${this._segFrames}\n` +
-                `person=${(personRatio * 100).toFixed(1)}%\n` +
-                `motion=${motion.toFixed(1)}\n` +
-                `healthySeen=${this._segHealthySeen}\n` +
-                `warmup=${warm}\n` +
-                `degen=${degenerate} hold=${hold}ms\n` +
-                `autoOff=${this._bgFilterAutoDisableCount} blocked=${this._bgFilterRuntimeBlocked}`
-            );
-        }
-    }
-
-    // ?segdebug=1 のときだけ、画面隅にライブ計測値を表示する診断用オーバーレイ
-    updateSegDebug(text) {
-        if (!this._segDebugEl) {
-            const el = document.createElement('div');
-            el.style.cssText = 'position:fixed;left:6px;bottom:6px;z-index:99999;'
-                + 'background:rgba(0,0,0,0.78);color:#0f0;font:11px/1.35 monospace;'
-                + 'padding:6px 8px;border-radius:6px;white-space:pre;pointer-events:none;';
-            document.body.appendChild(el);
-            this._segDebugEl = el;
-        }
-        this._segDebugEl.textContent = text;
     }
 
     // 破綻が確定したときの処理。1回目は柔らかく案内して再挑戦可、2回目は確定無効化。
@@ -1849,9 +1771,6 @@ class ComChat {
         this._segFilterStartT = null;
         this._segDegenStart = null;
         this._segHealthySeen = false;
-        this._motionCanvas = null;
-        this._motionCtx = null;
-        this._motionPrev = null;
     }
 
     async applyBgFilter(type) {
