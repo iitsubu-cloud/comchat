@@ -1643,7 +1643,6 @@ class ComChat {
     static get SEG_SUSTAIN_MS() { return 2500; }   // この時間連続で破綻したら自動オフ
     static get SEG_DEGEN_RATIO() { return 0.005; } // 人物がこの割合未満なら「ほぼ0%」
     static get SEG_HEALTHY_RATIO() { return 0.08; }// 一度でもこの割合に達したら正常実績あり
-    static get SEG_MOTION_THRESHOLD() { return 6; }// 平均輝度差がこれ以上なら「人がいる(動き)」
 
     // 生カメラの動き(フレーム間の平均輝度差)を返す。人が席を外しただけ(静止)と、
     // 人がいるのにマスクが破綻している状態を区別するために使う。
@@ -1686,12 +1685,13 @@ class ComChat {
         const now = performance.now();
         if (this._segFilterStartT == null) this._segFilterStartT = now;
         const warm = now - this._segFilterStartT < ComChat.SEG_WARMUP_MS; // 起動直後は判定しない
-        const motion = this.detectMotion(sourceImage);
+        const motion = this.detectMotion(sourceImage); // HUD表示用(Air2では常に0になり判定には使えない)
         let degenerate = false;
         if (!warm) {
             if (personRatio >= ComChat.SEG_HEALTHY_RATIO) this._segHealthySeen = true;
+            // 「人物ほぼ0%」かつ「起動後一度も正常分離していない」が継続したら破綻。
+            // 席外し(会議途中)は離席前に healthySeen=true になるため発動しない。
             degenerate = personRatio < ComChat.SEG_DEGEN_RATIO
-                && motion >= ComChat.SEG_MOTION_THRESHOLD
                 && !this._segHealthySeen;
             if (degenerate) {
                 if (this._segDegenStart == null) {
