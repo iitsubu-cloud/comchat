@@ -37,6 +37,15 @@ class ComChat {
         this.prevConfidenceData = null;
         this.bgSourceIsOwned = false;
         this.imageCapture = null;
+        // 実行時のフィルター破綻検知(Air2のような端末で人物が消える/全体ボケ/クラッシュ対策)
+        this._segFilterStartT = null;   // フィルター起動時刻(ウォームアップ計測用)
+        this._segDegenStart = null;     // 破綻状態が連続し始めた時刻
+        this._segHealthySeen = false;   // 起動後に一度でも人物が正常分離できたか
+        this._motionCanvas = null;      // 動き検出用の小さなオフスクリーン
+        this._motionCtx = null;
+        this._motionPrev = null;        // 前フレームの輝度(動き検出)
+        this._bgFilterAutoDisableCount = 0;  // セッション内の自動オフ回数
+        this._bgFilterRuntimeBlocked = false; // 2回検知後はそのセッション無効で確定
         this.bgImage = null;
         this.bgPresets = {};
         this.bgHistory = [];
@@ -1528,7 +1537,9 @@ class ComChat {
         if (!this.prevConfidenceData || this.prevConfidenceData.length !== maskData.length) {
             this.prevConfidenceData = new Float32Array(maskData);
         }
+        let personCount = 0;
         for (let i = 0; i < maskData.length; i++) {
+            if (maskData[i] > 128) personCount++;
             const diff = Math.abs(maskData[i] - this.prevConfidenceData[i]);
             const alpha = diff > 80 ? 0.5 : 0.15;
             this.prevConfidenceData[i] = alpha * maskData[i] + (1 - alpha) * this.prevConfidenceData[i];
@@ -1536,6 +1547,9 @@ class ComChat {
         }
         this.maskCtx.putImageData(this.maskImageData, 0, 0);
         result.close?.();
+
+        // 破綻検知: 「人物がほぼ0%」かつ「人は実際にいる(動きあり)」が継続したら自動オフ
+        this.checkSegmentationHealth(personCount / maskData.length, sourceImage);
 
         // Scale-down/up smoothing softens jagged mask boundaries
         const mw = this.maskSmallCanvas.width, mh = this.maskSmallCanvas.height;
@@ -1612,6 +1626,95 @@ class ComChat {
         ctx.globalCompositeOperation = 'source-over';
         ctx.drawImage(this.personCanvas, 0, 0, w, h);
         ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // 破綻検知のパラメータ
+    static get SEG_WARMUP_MS() { return 600; }     // 起動直後の不安定フレームを無視
+    static get SEG_SUSTAIN_MS() { return 2500; }   // この時間連続で破綻したら自動オフ
+    static get SEG_DEGEN_RATIO() { return 0.005; } // 人物がこの割合未満なら「ほぼ0%」
+    static get SEG_HEALTHY_RATIO() { return 0.08; }// 一度でもこの割合に達したら正常実績あり
+    static get SEG_MOTION_THRESHOLD() { return 6; }// 平均輝度差がこれ以上なら「人がいる(動き)」
+
+    // 生カメラの動き(フレーム間の平均輝度差)を返す。人が席を外しただけ(静止)と、
+    // 人がいるのにマスクが破綻している状態を区別するために使う。
+    detectMotion(sourceImage) {
+        try {
+            if (!this._motionCanvas) {
+                this._motionCanvas = document.createElement('canvas');
+                this._motionCanvas.width = 32;
+                this._motionCanvas.height = 24;
+                this._motionCtx = this._motionCanvas.getContext('2d', { willReadFrequently: true });
+                this._motionPrev = null;
+            }
+            const mc = this._motionCtx, W = 32, H = 24;
+            mc.drawImage(sourceImage, 0, 0, W, H);
+            const data = mc.getImageData(0, 0, W, H).data;
+            const n = W * H;
+            const cur = new Uint8Array(n);
+            for (let i = 0; i < n; i++) {
+                // 輝度 = 0.299R+0.587G+0.114B の近似
+                cur[i] = (data[i * 4] * 77 + data[i * 4 + 1] * 150 + data[i * 4 + 2] * 29) >> 8;
+            }
+            let motion = 0;
+            if (this._motionPrev && this._motionPrev.length === n) {
+                let sum = 0;
+                for (let i = 0; i < n; i++) sum += Math.abs(cur[i] - this._motionPrev[i]);
+                motion = sum / n;
+            }
+            this._motionPrev = cur;
+            return motion;
+        } catch {
+            // 取得できない場合は「動きあり」とみなさない(誤って席外しを止めないため0を返す)
+            return 0;
+        }
+    }
+
+    // セグメンテーションが破綻していないか毎フレーム監視する。
+    // 「人物 ≈ 0%」かつ「動きあり(人はいる)」かつ「起動後に一度も正常分離していない」が
+    // ウォームアップ後に一定時間続いたら、フィルターを自動的にオフにする。
+    checkSegmentationHealth(personRatio, sourceImage) {
+        const now = performance.now();
+        if (this._segFilterStartT == null) this._segFilterStartT = now;
+        // 起動直後(モデル初期化中)はまだ判定しない
+        if (now - this._segFilterStartT < ComChat.SEG_WARMUP_MS) {
+            // 動き履歴だけは更新しておく
+            this.detectMotion(sourceImage);
+            return;
+        }
+        if (personRatio >= ComChat.SEG_HEALTHY_RATIO) this._segHealthySeen = true;
+
+        const motion = this.detectMotion(sourceImage);
+        const degenerate = personRatio < ComChat.SEG_DEGEN_RATIO
+            && motion >= ComChat.SEG_MOTION_THRESHOLD
+            && !this._segHealthySeen;
+
+        if (degenerate) {
+            if (this._segDegenStart == null) {
+                this._segDegenStart = now;
+            } else if (now - this._segDegenStart >= ComChat.SEG_SUSTAIN_MS) {
+                this.handleBgFilterBreakage();
+            }
+        } else {
+            this._segDegenStart = null;
+        }
+    }
+
+    // 破綻が確定したときの処理。1回目は柔らかく案内して再挑戦可、2回目は確定無効化。
+    handleBgFilterBreakage() {
+        this._segDegenStart = null;
+        this._bgFilterAutoDisableCount++;
+        const second = this._bgFilterAutoDisableCount >= 2;
+        if (second) this._bgFilterRuntimeBlocked = true;
+        const msg = second
+            ? 'この端末では背景フィルターを利用できません。'
+            : '背景フィルターがうまく動作していないようです。オフにしました。';
+        this.applyBgFilter('none'); // フィルター停止＋生カメラに復帰
+        const inPrecall = this.precallDialog && !this.precallDialog.classList.contains('hidden');
+        if (inPrecall) {
+            this.showPrecallStatus(msg);
+        } else {
+            this.showStatus(msg, 'error');
+        }
     }
 
     startBgFilterLoop() {
@@ -1710,6 +1813,13 @@ class ComChat {
             this.bgFilterStream.getTracks().forEach(t => t.stop());
         }
         this.bgFilterStream = null;
+        // 破綻検知の計測状態をリセット(自動オフ回数/恒久ブロックはセッション維持なので残す)
+        this._segFilterStartT = null;
+        this._segDegenStart = null;
+        this._segHealthySeen = false;
+        this._motionCanvas = null;
+        this._motionCtx = null;
+        this._motionPrev = null;
     }
 
     async applyBgFilter(type) {
@@ -1947,6 +2057,8 @@ class ComChat {
     // ・マスクが破綻して人物が消える(例: iPad 2)
     // ため、機能自体を無効化する。結果はメモ化(canvas生成を毎回避ける)。
     canUseBgFilter() {
+        // 実行時に2回破綻を検知した端末はそのセッション無効で確定(再オンを防ぐ)
+        if (this._bgFilterRuntimeBlocked) return false;
         if (this._bgFilterSupported !== undefined) return this._bgFilterSupported;
         this._bgFilterSupported = false;
         try {
