@@ -279,6 +279,12 @@ class ComChat {
                 this.localStream = null;
             }
             if (this.peer) { this.peer.destroy(); this.peer = null; }
+            // 失敗時の残骸がMapに残らないよう確実にクリア(joinRoomと同様の保険)
+            this.connections.clear();
+            this.calls.clear();
+            this.usernames.clear();
+            this.muteStates.clear();
+            this.cameraStates.clear();
             this.isHost = false;
             this.roomId = null;
             this.createRoomBtn.disabled = false;
@@ -322,6 +328,13 @@ class ComChat {
                 this.localStream = null;
             }
             if (this.peer) { this.peer.destroy(); this.peer = null; }
+            // peer破棄後もセッション用Mapに失敗時の残骸が残ると、同じIDで再参加した際に
+            // connectToHost が「接続済み」と誤判定して通話画面に入ってしまう。確実にクリアする。
+            this.connections.clear();
+            this.calls.clear();
+            this.usernames.clear();
+            this.muteStates.clear();
+            this.cameraStates.clear();
             this.roomId = null;
             this.createRoomBtn.disabled = false;
             this.joinRoomBtn.disabled = false;
