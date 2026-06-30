@@ -505,6 +505,9 @@ body {
 
 .chat-input {
     flex: 1;
+    /* flexアイテムの既定 min-width:auto だと入力欄がintrinsic幅以下に縮まず、
+       狭いチャット欄(iPad Air2横向き等)で送信ボタンを右に押し出して見切れさせる。 */
+    min-width: 0;
     padding: 10px 15px;
     border: 1px solid #ddd;
     border-radius: 20px;
@@ -518,6 +521,7 @@ body {
     border: none;
     border-radius: 20px;
     cursor: pointer;
+    flex-shrink: 0; /* 入力欄に押されても送信ボタンは縮ませない/切らせない */
 }
 
 /* ファイル添付ボタン */
