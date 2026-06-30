@@ -862,6 +862,10 @@ class ComChat {
         let best = 0, bestCols = 1;
         for (let cols = 1; cols <= N; cols++) {
             const rows = Math.ceil(N / cols);
+            // 縦積み(行数>列数)になる配置は候補から外し、横並びを優先する。
+            // 縦長/正方形エリアで2人が1列・3人が1列に積まれる問題を防ぐ。
+            // cols=Nなら必ずrows=1なので候補が空になることはない。
+            if (rows > cols) continue;
             const cw = (W - gap * (cols - 1)) / cols;
             const ch = (H - gap * (rows - 1)) / rows;
             const w = Math.max(0, Math.min(cw, ch * 16 / 9));
