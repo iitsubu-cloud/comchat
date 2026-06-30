@@ -46,6 +46,9 @@ class ComChat {
         this._motionPrev = null;        // 前フレームの輝度(動き検出)
         this._bgFilterAutoDisableCount = 0;  // セッション内の自動オフ回数
         this._bgFilterRuntimeBlocked = false; // 2回検知後はそのセッション無効で確定
+        this._segDebug = /[?&]segdebug=1/.test(location.search); // ライブ計測オーバーレイ
+        this._segDebugEl = null;
+        this._segFrames = 0;
         this.bgImage = null;
         this.bgPresets = {};
         this.bgHistory = [];
@@ -1526,6 +1529,13 @@ class ComChat {
     }
 
     onSegmentationResults(result, sourceImage) {
+        if (this._segDebug) {
+            this._segEntryCount = (this._segEntryCount || 0) + 1;
+            const masks = result?.confidenceMasks?.length;
+            if (!this._segDebugEl || this._segEntryCount <= 3) {
+                this.updateSegDebug(`entry#${this._segEntryCount} masks=${masks}`);
+            }
+        }
         if (this.bgFilterType === 'none' || !this.bgFilterCtx) { result.close?.(); return; }
         const ctx = this.bgFilterCtx;
         const w = this.bgFilterCanvas.width;
@@ -1675,28 +1685,50 @@ class ComChat {
     checkSegmentationHealth(personRatio, sourceImage) {
         const now = performance.now();
         if (this._segFilterStartT == null) this._segFilterStartT = now;
-        // 起動直後(モデル初期化中)はまだ判定しない
-        if (now - this._segFilterStartT < ComChat.SEG_WARMUP_MS) {
-            // 動き履歴だけは更新しておく
-            this.detectMotion(sourceImage);
-            return;
-        }
-        if (personRatio >= ComChat.SEG_HEALTHY_RATIO) this._segHealthySeen = true;
-
+        const warm = now - this._segFilterStartT < ComChat.SEG_WARMUP_MS; // 起動直後は判定しない
         const motion = this.detectMotion(sourceImage);
-        const degenerate = personRatio < ComChat.SEG_DEGEN_RATIO
-            && motion >= ComChat.SEG_MOTION_THRESHOLD
-            && !this._segHealthySeen;
-
-        if (degenerate) {
-            if (this._segDegenStart == null) {
-                this._segDegenStart = now;
-            } else if (now - this._segDegenStart >= ComChat.SEG_SUSTAIN_MS) {
-                this.handleBgFilterBreakage();
+        let degenerate = false;
+        if (!warm) {
+            if (personRatio >= ComChat.SEG_HEALTHY_RATIO) this._segHealthySeen = true;
+            degenerate = personRatio < ComChat.SEG_DEGEN_RATIO
+                && motion >= ComChat.SEG_MOTION_THRESHOLD
+                && !this._segHealthySeen;
+            if (degenerate) {
+                if (this._segDegenStart == null) {
+                    this._segDegenStart = now;
+                } else if (now - this._segDegenStart >= ComChat.SEG_SUSTAIN_MS) {
+                    this.handleBgFilterBreakage();
+                }
+            } else {
+                this._segDegenStart = null;
             }
-        } else {
-            this._segDegenStart = null;
         }
+        if (this._segDebug) {
+            this._segFrames++;
+            const hold = this._segDegenStart ? Math.round(now - this._segDegenStart) : 0;
+            this.updateSegDebug(
+                `#${this._segFrames}\n` +
+                `person=${(personRatio * 100).toFixed(1)}%\n` +
+                `motion=${motion.toFixed(1)}\n` +
+                `healthySeen=${this._segHealthySeen}\n` +
+                `warmup=${warm}\n` +
+                `degen=${degenerate} hold=${hold}ms\n` +
+                `autoOff=${this._bgFilterAutoDisableCount} blocked=${this._bgFilterRuntimeBlocked}`
+            );
+        }
+    }
+
+    // ?segdebug=1 のときだけ、画面隅にライブ計測値を表示する診断用オーバーレイ
+    updateSegDebug(text) {
+        if (!this._segDebugEl) {
+            const el = document.createElement('div');
+            el.style.cssText = 'position:fixed;left:6px;bottom:6px;z-index:99999;'
+                + 'background:rgba(0,0,0,0.78);color:#0f0;font:11px/1.35 monospace;'
+                + 'padding:6px 8px;border-radius:6px;white-space:pre;pointer-events:none;';
+            document.body.appendChild(el);
+            this._segDebugEl = el;
+        }
+        this._segDebugEl.textContent = text;
     }
 
     // 破綻が確定したときの処理。1回目は柔らかく案内して再挑戦可、2回目は確定無効化。
