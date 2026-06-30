@@ -1118,10 +1118,11 @@ body {
     }
 
     /* 案A: モバイルは映像を主役にし、チャットはボトムシートで開閉 */
-    /* 人数で列数を出し分け（PCのrelayoutVideoGridと同じ思想）:
-       既定（3人以上）は2列で一覧性を上げ、1〜2人は1列で顔を大きく見せる */
+    /* 列数はJS(relayoutVideoGrid)が人数に応じてインラインで設定する
+       (1〜2人=1列/3人以上=2列)。CSSの:has()はSafari15系で子の動的追加時に
+       再評価されない不具合があるため、ここでは初期フォールバックのみ指定。 */
     .video-grid {
-        grid-template-columns: repeat(2, 1fr);
+        grid-template-columns: 1fr;
         grid-auto-rows: max-content;
         flex: 1 1 auto;
         min-height: 0;
@@ -1129,11 +1130,6 @@ body {
         overflow-y: auto;
         align-content: start;
         gap: 8px;
-    }
-    /* 1人（only-child）／2人（2番目が最後）のときは1列 */
-    .video-grid:has(.video-container:only-child),
-    .video-grid:has(.video-container:nth-child(2):last-child) {
-        grid-template-columns: 1fr;
     }
 
     /* 通話画面は全画面固定・スクロールなしのアプリ風レイアウト */

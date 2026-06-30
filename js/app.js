@@ -850,13 +850,20 @@ class ComChat {
         const wide = window.matchMedia('(min-width: 769px)').matches;
         const presenter = grid.closest('.call-main')?.classList.contains('presenter-mode');
         const tiles = grid.querySelectorAll('.video-container');
-        if (!wide || presenter || tiles.length === 0) {
+        const N = tiles.length;
+        if (presenter || N === 0) {
             grid.style.gridTemplateColumns = '';
             grid.style.removeProperty('--vg-tile');
-            this._updateGridDebug('mobile/CSS', tiles.length);
             return;
         }
-        const N = tiles.length;
+        if (!wide) {
+            // モバイル(≤768px)は人数で列数を決定: 1〜2人=1列(顔を大きく)、3人以上=2列(一覧性)。
+            // CSSの:has()はSafari15系で子要素の動的追加時に再評価されない不具合があるため、
+            // JSで明示的に設定する(relayoutは参加者の増減・チャット開閉ごとに呼ばれる)。
+            grid.style.removeProperty('--vg-tile');
+            grid.style.gridTemplateColumns = (N <= 2) ? '1fr' : 'repeat(2, 1fr)';
+            return;
+        }
         const gap = 12;
         const W = grid.clientWidth, H = grid.clientHeight;
         if (W <= 0 || H <= 0) return;
@@ -874,31 +881,6 @@ class ComChat {
         }
         grid.style.gridTemplateColumns = `repeat(${bestCols}, auto)`;
         grid.style.setProperty('--vg-tile', Math.floor(best) + 'px');
-        this._updateGridDebug('JS/relayout', N);
-    }
-
-    // 一時診断: ?griddbg=1 のとき、レイアウト判定の実値を画面上に表示する。
-    _updateGridDebug(branch, n) {
-        if (!new URLSearchParams(location.search).has('griddbg')) return;
-        const grid = this.videoGrid;
-        let el = document.getElementById('grid-debug');
-        if (!el) {
-            el = document.createElement('div');
-            el.id = 'grid-debug';
-            el.style.cssText = 'position:fixed;top:0;left:0;z-index:9999;background:rgba(0,0,0,.85);color:#0f0;font:12px/1.4 monospace;padding:6px 8px;white-space:pre;pointer-events:none;max-width:100vw';
-            document.body.appendChild(el);
-        }
-        let hasSupport = 'n/a';
-        try { hasSupport = CSS.supports('selector(:has(*))') ? 'yes' : 'no'; } catch (e) {}
-        const cols = getComputedStyle(grid).gridTemplateColumns;
-        el.textContent =
-            'branch=' + branch + '  N=' + n + '\n' +
-            'innerW=' + window.innerWidth + ' innerH=' + window.innerHeight + '\n' +
-            'mm(min769)=' + window.matchMedia('(min-width:769px)').matches +
-            ' mm(max768)=' + window.matchMedia('(max-width:768px)').matches + '\n' +
-            'gridClientW=' + grid.clientWidth + ' H=' + grid.clientHeight + '\n' +
-            'computedCols=' + cols + '\n' +
-            ':has support=' + hasSupport + '  dpr=' + window.devicePixelRatio;
     }
 
     sendMessage() {
