@@ -853,6 +853,7 @@ class ComChat {
         if (!wide || presenter || tiles.length === 0) {
             grid.style.gridTemplateColumns = '';
             grid.style.removeProperty('--vg-tile');
+            this._updateGridDebug('mobile/CSS', tiles.length);
             return;
         }
         const N = tiles.length;
@@ -873,6 +874,31 @@ class ComChat {
         }
         grid.style.gridTemplateColumns = `repeat(${bestCols}, auto)`;
         grid.style.setProperty('--vg-tile', Math.floor(best) + 'px');
+        this._updateGridDebug('JS/relayout', N);
+    }
+
+    // 一時診断: ?griddbg=1 のとき、レイアウト判定の実値を画面上に表示する。
+    _updateGridDebug(branch, n) {
+        if (!new URLSearchParams(location.search).has('griddbg')) return;
+        const grid = this.videoGrid;
+        let el = document.getElementById('grid-debug');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'grid-debug';
+            el.style.cssText = 'position:fixed;top:0;left:0;z-index:9999;background:rgba(0,0,0,.85);color:#0f0;font:12px/1.4 monospace;padding:6px 8px;white-space:pre;pointer-events:none;max-width:100vw';
+            document.body.appendChild(el);
+        }
+        let hasSupport = 'n/a';
+        try { hasSupport = CSS.supports('selector(:has(*))') ? 'yes' : 'no'; } catch (e) {}
+        const cols = getComputedStyle(grid).gridTemplateColumns;
+        el.textContent =
+            'branch=' + branch + '  N=' + n + '\n' +
+            'innerW=' + window.innerWidth + ' innerH=' + window.innerHeight + '\n' +
+            'mm(min769)=' + window.matchMedia('(min-width:769px)').matches +
+            ' mm(max768)=' + window.matchMedia('(max-width:768px)').matches + '\n' +
+            'gridClientW=' + grid.clientWidth + ' H=' + grid.clientHeight + '\n' +
+            'computedCols=' + cols + '\n' +
+            ':has support=' + hasSupport + '  dpr=' + window.devicePixelRatio;
     }
 
     sendMessage() {
