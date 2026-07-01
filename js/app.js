@@ -861,7 +861,14 @@ class ComChat {
             // CSSの:has()はSafari15系で子要素の動的追加時に再評価されない不具合があるため、
             // JSで明示的に設定する(relayoutは参加者の増減・チャット開閉ごとに呼ばれる)。
             grid.style.removeProperty('--vg-tile');
-            grid.style.gridTemplateColumns = (N <= 2) ? '1fr' : 'repeat(2, 1fr)';
+            const cols = (N <= 2) ? '1fr' : 'repeat(2, 1fr)';
+            grid.style.gridTemplateColumns = cols;
+            // iPad Air2実機で確認: Safari(WebKit)は縦向きコールド起動時、既存gridへの
+            // grid-template-columns変更を子要素の再配置に反映しないことがある(回転させると直る=
+            // 強制リフローが起きると直る)。wide分岐はclientWidth/Height読み取りで自然に
+            // リフローが挟まるため影響を受けない。ここでも強制リフロー+次フレーム再適用で確実に反映させる。
+            void grid.offsetHeight;
+            requestAnimationFrame(() => { grid.style.gridTemplateColumns = cols; });
             return;
         }
         const gap = 12;
