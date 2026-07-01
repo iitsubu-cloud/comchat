@@ -1129,7 +1129,11 @@ body {
         display: flex;
         flex-wrap: wrap;
         justify-content: center;
-        align-content: start;
+        /* Safari15系は align-content:start を認識せず初期値stretchに落ち、背の高い
+           グリッド領域いっぱいに行を引き伸ばして16:9を壊す。flex-startで確実に上へ詰め、
+           align-items:flex-startで行内のタイルも縦に伸ばさない(高さはaspect-ratioが決める)。 */
+        align-content: flex-start;
+        align-items: flex-start;
         flex: 1 1 auto;
         min-height: 0;
         max-height: none;
@@ -1138,6 +1142,7 @@ body {
     }
     .video-grid > .video-container {
         width: 100%; /* JSが人数で上書き。1人時の初期フォールバック */
+        height: auto; /* aspect-ratio(16:9)に高さを委ねる。stretchで縦に伸びるのを防ぐ */
     }
 
     /* 通話画面は全画面固定・スクロールなしのアプリ風レイアウト */
