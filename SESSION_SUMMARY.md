@@ -2,7 +2,7 @@
 
 **最終更新**: 2026-07-01（セッション20）
 **プロジェクト**: ComChat (完全無料P2Pビデオ会議アプリ)
-**進捗状況（セッション20）**: セッション19までで未解決だった **iPad Air2 縦向きの映像グリッド列数固着** に対し、**アプローチを転換**して修正(app.js v90 / style.css v37)。症状「回転させると直る＝`grid-template-columns` の値は変えずフル再レイアウトで直る」から、原因は **Safari15系がCSS Gridの列トラック変更を子タイルの再配置に反映しない描画バグ** とほぼ断定。`:has()` も JS の `grid-template-columns` も `display:none→''` のツリー再構築も効かなかった（＝グリッドを使う限り固着する）ため、**モバイル(≤768px)だけ CSS Grid をやめ flexbox に変更**。列数は `relayoutVideoGrid` が各タイルの `width`(1〜2人=100%/3人以上=`calc(50% - 4px)`)で決める方式に。flex は「子の width 変更」を確実に再レイアウトするためグリッド固有の固着バグを踏まない。PC(≥769px)は従来の grid ロジックのまま無変更（モバイルで付与した inline width は wide/presenter 分岐で除去）。**Chromiumプレビューで検証OK**：375px幅で 1人→1列/2人→1列(縦積み)/3〜4人→2列、さらに **4→3→2 と減らしても列数が正しく戻る**（Safariが grid で失敗していた挙動）。`?griddbg=1` は flex 用に表示更新(display/tileW computed)して**残置**（実機で確認するため）。**未タグ・デプロイ済み想定**。**【実機フィードバック→追加修正 css v38】**：SE3/iPad Air2 実機で3人=2列になったものの、**タイルが縦に間延びして16:9が崩れる**不具合が出た（iPadは回転後さらに悪化）。原因＝モバイル `.video-grid` の `align-content: start` を Safari15系が認識せず初期値 `stretch` に落ち、背の高いグリッド領域いっぱいに行を引き伸ばし＋`align-items` 既定の `stretch` でタイルも縦伸び。→ `align-content: flex-start` ＋ `align-items: flex-start` ＋ `.video-container { height:auto }` に修正（`align-items:flex-start` が本命の安全弁：行が伸びてもタイルはaspect-ratioの自然な高さを保ち上詰めになる）。Chromium 768pxで 1/2人=1列16:9・3人=2列16:9(364×205)・上詰めを確認。**実機再確認待ち**。**次回：iPad Air2縦で 3人=2列・2人=1列・動的増減が実機で直るか最終確認 → OKなら griddbg 撤去して `v3.7-stable` 付与**。SE3・M4 MBA(PC)はセッション19で実機OK。
+**進捗状況（セッション20）**: セッション19までで未解決だった **iPad Air2 縦向きの映像グリッド列数固着** に対し、**アプローチを転換**して修正(app.js v90 / style.css v37)。症状「回転させると直る＝`grid-template-columns` の値は変えずフル再レイアウトで直る」から、原因は **Safari15系がCSS Gridの列トラック変更を子タイルの再配置に反映しない描画バグ** とほぼ断定。`:has()` も JS の `grid-template-columns` も `display:none→''` のツリー再構築も効かなかった（＝グリッドを使う限り固着する）ため、**モバイル(≤768px)だけ CSS Grid をやめ flexbox に変更**。列数は `relayoutVideoGrid` が各タイルの `width`(1〜2人=100%/3人以上=`calc(50% - 4px)`)で決める方式に。flex は「子の width 変更」を確実に再レイアウトするためグリッド固有の固着バグを踏まない。PC(≥769px)は従来の grid ロジックのまま無変更（モバイルで付与した inline width は wide/presenter 分岐で除去）。**Chromiumプレビューで検証OK**：375px幅で 1人→1列/2人→1列(縦積み)/3〜4人→2列、さらに **4→3→2 と減らしても列数が正しく戻る**（Safariが grid で失敗していた挙動）。`?griddbg=1` は flex 用に表示更新(display/tileW computed)して**残置**（実機で確認するため）。**未タグ・デプロイ済み想定**。**【実機フィードバック→追加修正 css v38】**：SE3/iPad Air2 実機で3人=2列になったものの、**タイルが縦に間延びして16:9が崩れる**不具合が出た（iPadは回転後さらに悪化）。原因＝モバイル `.video-grid` の `align-content: start` を Safari15系が認識せず初期値 `stretch` に落ち、背の高いグリッド領域いっぱいに行を引き伸ばし＋`align-items` 既定の `stretch` でタイルも縦伸び。→ `align-content: flex-start` ＋ `align-items: flex-start` ＋ `.video-container { height:auto }` に修正（`align-items:flex-start` が本命の安全弁：行が伸びてもタイルはaspect-ratioの自然な高さを保ち上詰めになる）。Chromium 768pxで 1/2人=1列16:9・3人=2列16:9(364×205)・上詰めを確認。**【実機OK・完了】全端末(iPhone SE3・iPad Air2縦・M4 MBA)で3人=2列・16:9維持・回転しても崩れないことを確認。→ `?griddbg=1` 診断オーバーレイと `_updateGridDebug` を撤去(app.js v91)し `v3.7-stable` を付与**。長年の iPad Air2 縦向き列数固着はこれで解決。
 
 **（旧）進捗状況（セッション19）**: セッション18の実装(v86)を実機確認。**iPhone SE3・M4 MBA(PC)はOK**だが、**iPad Air2縦向きで映像グリッドの列数が固着する問題が継続**。症状の詳細：①縦向きのまま3人入室→1列のまま(本来2列)、②端末を回転(縦→横)させると2列になる=強制リフローで直る、③縦で人数を増減しても列数が変わらず、回転して初めて変わる、④3人縦向き(2列表示中)から1人退出して2人にしても2列のまま(本来1列)。→ Safari(WebKit)が既存gridへの `grid-template-columns` 変更を子要素の再配置に反映しない描画バグと推定。**対策を2段階で試みたが未解決**：(A) `void grid.offsetHeight` 強制リフロー＋rAF再適用(app.js v87)→効かず。(B) `display` を一瞬 `none→''` に切替える強制再レイアウト(app.js v88)→3人入室時に画面が一瞬チラつくが**依然1列のまま**。→ 当て推量をやめ実測に切替。**`?griddbg=1` 診断オーバーレイを再追加(app.js v89)**：画面左上に `N / wide / innerW / inline(列指定) / computed(実際に算出された列トラック)` をライブ表示。**次回：iPad Air2で `https://iitsubu-cloud.github.io/comchat/?griddbg=1` を開き、縦向き3人時の値を取得**。`computed` が2トラック(例 `372px 372px`)なのに画面1列なら純粋な描画バグ→DOM再アタッチ等のより強力な手法へ。`computed` が1トラックなら指定が効いていない→指定方法の問題。`inline=1fr` ならN判定バグ。ロジック自体はプレビュー(別エンジン)で正常動作確認済み(N=1,2→1列/N=3,4→2列、増減とも正しい、displayは''に戻る)。**全変更(v87〜v89)デプロイ済み・未タグ**。
 - 補足：ホストのマイクオフアイコンが表示されない事象が一度あったが、その後の再テストで自然に直った。`mute-state` 送受信ロジックにコード上の恒常バグは見当たらず、受信タイミングのズレと判断し様子見。
@@ -400,12 +400,11 @@
 
 - **ブランチ**: main
 - **最新安定タグ**: v3.6-stable（送信ボタン見切れ修正 827c2b4・実機OK）
-- **JSバージョン**: app.js?v=90（モバイルflex化・`?griddbg=1` 診断オーバーレイ入り・一時）
+- **最新安定タグ**: **v3.7-stable**（モバイルflex化で iPad Air2縦の列数固着を解決＋16:9維持・全端末実機OK）
+- **JSバージョン**: app.js?v=91（モバイルflex化・診断オーバーレイ撤去済み）
 - **CSSバージョン**: style.css?v=38（モバイル `.video-grid` を Grid→flexbox＋align-content/items:flex-startで縦伸び防止）
-- **最新コミット**: （セッション20のflex化コミット・push済み）
-- **タグ後の未タグ変更**: モバイル2列化＋PC縦積み修正＋入室ずれ修正＋:has不具合修正（v83〜v86）＋セッション19の列数固着対策(v87〜v89)に加え、**セッション20：モバイルをflexboxに転換して列数固着を修正(v90/css v37)**。**iPad Air2縦の実機最終確認待ちのため v3.7-stable は保留**
-- **診断ページ**: diag.html（端末の値取得用）。加えて `?griddbg=1`(app.js v90) で映像グリッド判定値(display/tileW computed)をライブ表示（実機OK確認後に撤去予定）
-- **判明事項/対処**: iPad Air2縦は `innerW=768`(mobile分岐)。**Safari15系はCSS Gridの列トラック変更を子タイルの再配置に反映しない描画バグがあり、`:has()`/JSの`grid-template-columns`/`display:none→''`のいずれでも解消しなかった**。→ モバイルは Grid をやめ **flexbox＋各タイルwidth指定** に転換（flexは子のwidth変更を確実に再レイアウトする）。Chromiumでは動的増減とも正常。実機で最終確認する
+- **診断ページ**: diag.html（端末の値取得用）のみ。`?griddbg=1` は撤去済み
+- **解決済み**: iPad Air2縦の映像グリッド列数固着。**Safari15系はCSS Gridの列トラック変更を子タイルの再配置に反映しない描画バグがあり、`:has()`/JSの`grid-template-columns`/`display:none→''`のいずれでも解消しなかった**。→ モバイル(≤768px)は Grid をやめ **flexbox＋各タイルwidth指定(1〜2人=100%/3人以上=calc(50% - 4px))** に転換。さらに Safari15が `align-content:start` を認識せず stretch に落ちてタイルが縦伸びする副作用を `align-content/align-items:flex-start` ＋ `.video-container{height:auto}` で解消。PC(≥769px)は従来のgridロジックのまま無変更。全端末実機OK
 
 ---
 
@@ -437,8 +436,8 @@
 - `v3.3-stable` — 旧端末対応（非対応GPUでフィルター無効化）＋PC/タブレット横向きのチャット開閉
 - `v3.4-stable` — Air2等のフィルター破綻を実行時検知して自動オフ（PC映像16:9固定・チャット既定オープン等のセッション15分も内包）
 - `v3.5-stable` — 参加フローのバグ2件修正（存在しないルーム参加で取り残される／失敗後の同ID再参加で入室できる）＋死んだhas-unread除去
-- `v3.6-stable` — チャット送信ボタン見切れ修正（iPad Air2横向き等・style.css v34）実機OK ← 最新
-- （未タグ）v83〜v86：モバイル2列化／PC縦積み修正／入室ずれ修正／:has不具合をJS移行で修正。実機最終確認OKなら `v3.7-stable` 予定
+- `v3.6-stable` — チャット送信ボタン見切れ修正（iPad Air2横向き等・style.css v34）実機OK
+- `v3.7-stable` — モバイル映像グリッドを Grid→flexbox に転換し iPad Air2縦の列数固着を解決＋16:9維持（app.js v91 / style.css v38）全端末実機OK ← 最新
 
 ---
 

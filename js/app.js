@@ -869,7 +869,6 @@ class ComChat {
             grid.style.gridTemplateColumns = ''; // 旧ビルドのインラインgrid指定が残っても無効化
             const tileW = (N <= 2) ? '100%' : 'calc(50% - 4px)';
             tiles.forEach(t => { t.style.width = tileW; });
-            this._updateGridDebug(N, wide, tileW);
             return;
         }
         tiles.forEach(t => t.style.removeProperty('width')); // モバイルで付与したwidthを解除(PCはCSS varで幅指定)
@@ -890,26 +889,6 @@ class ComChat {
         }
         grid.style.gridTemplateColumns = `repeat(${bestCols}, auto)`;
         grid.style.setProperty('--vg-tile', Math.floor(best) + 'px');
-        this._updateGridDebug(N, wide, grid.style.gridTemplateColumns);
-    }
-
-    // ?griddbg=1 のときだけ、映像グリッドの判定値を画面左上にライブ表示する診断用。
-    // 実機(iPad Air2縦向き)で「JSは2列指定なのに描画が1列」なのか「指定自体が1列」なのかを
-    // computed(実際に算出された列トラック)で切り分けるため。通常は何もしない。
-    _updateGridDebug(N, wide, cols) {
-        if (!location.search.includes('griddbg')) return;
-        let el = document.getElementById('griddbg');
-        if (!el) {
-            el = document.createElement('div');
-            el.id = 'griddbg';
-            el.style.cssText = 'position:fixed;top:44px;left:4px;z-index:99999;background:rgba(0,0,0,0.82);color:#0f0;font:12px/1.45 monospace;padding:6px 8px;border-radius:6px;white-space:pre;pointer-events:none;';
-            document.body.appendChild(el);
-        }
-        const grid = this.videoGrid;
-        const disp = grid ? getComputedStyle(grid).display : '?';
-        const tile = grid?.querySelector('.video-container');
-        const tw = tile ? getComputedStyle(tile).width : '?';
-        el.textContent = `N=${N} wide=${wide} innerW=${window.innerWidth}\ndisplay=${disp} inlineW=${cols}\ntileW(computed)=${tw}`;
     }
 
     sendMessage() {
