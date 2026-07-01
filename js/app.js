@@ -871,6 +871,7 @@ class ComChat {
             grid.style.display = 'none';
             void grid.offsetHeight; // 強制リフロー(none状態をレイアウトツリーに確定させる)
             grid.style.display = '';
+            this._updateGridDebug(N, wide, cols);
             return;
         }
         const gap = 12;
@@ -890,6 +891,24 @@ class ComChat {
         }
         grid.style.gridTemplateColumns = `repeat(${bestCols}, auto)`;
         grid.style.setProperty('--vg-tile', Math.floor(best) + 'px');
+        this._updateGridDebug(N, wide, grid.style.gridTemplateColumns);
+    }
+
+    // ?griddbg=1 のときだけ、映像グリッドの判定値を画面左上にライブ表示する診断用。
+    // 実機(iPad Air2縦向き)で「JSは2列指定なのに描画が1列」なのか「指定自体が1列」なのかを
+    // computed(実際に算出された列トラック)で切り分けるため。通常は何もしない。
+    _updateGridDebug(N, wide, cols) {
+        if (!location.search.includes('griddbg')) return;
+        let el = document.getElementById('griddbg');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'griddbg';
+            el.style.cssText = 'position:fixed;top:44px;left:4px;z-index:99999;background:rgba(0,0,0,0.82);color:#0f0;font:12px/1.45 monospace;padding:6px 8px;border-radius:6px;white-space:pre;pointer-events:none;';
+            document.body.appendChild(el);
+        }
+        const grid = this.videoGrid;
+        const comp = grid ? getComputedStyle(grid).gridTemplateColumns : '?';
+        el.textContent = `N=${N} wide=${wide} innerW=${window.innerWidth}\ninline=${cols}\ncomputed=${comp}`;
     }
 
     sendMessage() {
