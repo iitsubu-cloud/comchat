@@ -854,26 +854,25 @@ class ComChat {
         if (presenter || N === 0) {
             grid.style.gridTemplateColumns = '';
             grid.style.removeProperty('--vg-tile');
+            tiles.forEach(t => t.style.removeProperty('width'));
             return;
         }
         if (!wide) {
             // モバイル(≤768px)は人数で列数を決定: 1〜2人=1列(顔を大きく)、3人以上=2列(一覧性)。
-            // CSSの:has()はSafari15系で子要素の動的追加時に再評価されない不具合があるため、
-            // JSで明示的に設定する(relayoutは参加者の増減・チャット開閉ごとに呼ばれる)。
+            // Safari15系(iPad Air2等)はCSS Gridのgrid-template-columns変更を子タイルの
+            // 再配置に反映しない描画バグがあり(縦向きで列数が回転するまで固着)、:has()も
+            // JSのgrid-template-columnsもdisplay:none→''のツリー再構築でも回避できなかった。
+            // そのためモバイルはCSS側でGridではなくflexboxを使い、ここでは各タイルのwidthで
+            // 列数を決める(1列=100%/2列=calc(50% - 4px)、gap 8pxの半分)。flexは子のwidth変更を
+            // 確実に再レイアウトするためグリッドの固着バグを踏まない。
             grid.style.removeProperty('--vg-tile');
-            const cols = (N <= 2) ? '1fr' : 'repeat(2, 1fr)';
-            grid.style.gridTemplateColumns = cols;
-            // iPad Air2実機で確認: Safari(WebKit)は既存gridへのgrid-template-columns変更を
-            // 子要素の再配置に反映しないことがある(縦向きで3人=1列/2人=2列のまま固まり、
-            // 端末を回転させると直る=強制リフローで直る)。offsetHeight読み取りだけでは不十分
-            // だったため、displayを一瞬none→gridに切り替えてグリッド全体の再レイアウトを強制する。
-            // 同一同期実行内でnone→''に戻すため画面には描画されず、映像もちらつかない。
-            grid.style.display = 'none';
-            void grid.offsetHeight; // 強制リフロー(none状態をレイアウトツリーに確定させる)
-            grid.style.display = '';
-            this._updateGridDebug(N, wide, cols);
+            grid.style.gridTemplateColumns = ''; // 旧ビルドのインラインgrid指定が残っても無効化
+            const tileW = (N <= 2) ? '100%' : 'calc(50% - 4px)';
+            tiles.forEach(t => { t.style.width = tileW; });
+            this._updateGridDebug(N, wide, tileW);
             return;
         }
+        tiles.forEach(t => t.style.removeProperty('width')); // モバイルで付与したwidthを解除(PCはCSS varで幅指定)
         const gap = 12;
         const W = grid.clientWidth, H = grid.clientHeight;
         if (W <= 0 || H <= 0) return;
@@ -907,8 +906,10 @@ class ComChat {
             document.body.appendChild(el);
         }
         const grid = this.videoGrid;
-        const comp = grid ? getComputedStyle(grid).gridTemplateColumns : '?';
-        el.textContent = `N=${N} wide=${wide} innerW=${window.innerWidth}\ninline=${cols}\ncomputed=${comp}`;
+        const disp = grid ? getComputedStyle(grid).display : '?';
+        const tile = grid?.querySelector('.video-container');
+        const tw = tile ? getComputedStyle(tile).width : '?';
+        el.textContent = `N=${N} wide=${wide} innerW=${window.innerWidth}\ndisplay=${disp} inlineW=${cols}\ntileW(computed)=${tw}`;
     }
 
     sendMessage() {
