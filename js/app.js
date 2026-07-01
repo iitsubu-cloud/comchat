@@ -863,12 +863,14 @@ class ComChat {
             grid.style.removeProperty('--vg-tile');
             const cols = (N <= 2) ? '1fr' : 'repeat(2, 1fr)';
             grid.style.gridTemplateColumns = cols;
-            // iPad Air2実機で確認: Safari(WebKit)は縦向きコールド起動時、既存gridへの
-            // grid-template-columns変更を子要素の再配置に反映しないことがある(回転させると直る=
-            // 強制リフローが起きると直る)。wide分岐はclientWidth/Height読み取りで自然に
-            // リフローが挟まるため影響を受けない。ここでも強制リフロー+次フレーム再適用で確実に反映させる。
-            void grid.offsetHeight;
-            requestAnimationFrame(() => { grid.style.gridTemplateColumns = cols; });
+            // iPad Air2実機で確認: Safari(WebKit)は既存gridへのgrid-template-columns変更を
+            // 子要素の再配置に反映しないことがある(縦向きで3人=1列/2人=2列のまま固まり、
+            // 端末を回転させると直る=強制リフローで直る)。offsetHeight読み取りだけでは不十分
+            // だったため、displayを一瞬none→gridに切り替えてグリッド全体の再レイアウトを強制する。
+            // 同一同期実行内でnone→''に戻すため画面には描画されず、映像もちらつかない。
+            grid.style.display = 'none';
+            void grid.offsetHeight; // 強制リフロー(none状態をレイアウトツリーに確定させる)
+            grid.style.display = '';
             return;
         }
         const gap = 12;
