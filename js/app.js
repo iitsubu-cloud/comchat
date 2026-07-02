@@ -130,6 +130,9 @@ class ComChat {
             if (!roomId) { this.showStatus('ルームIDを入力してください', 'error'); return; }
             this.showPreCallDialog('join');
         });
+        // ルームID入力中は「参加する」を呼吸アニメで強調し「ルーム参加」をグレー化。
+        // IDを入れた後に誤って「ルーム参加」を再度押して無反応と感じる誤操作を防ぐ。
+        this.joinRoomIdInput.addEventListener('input', () => this.updateJoinReadyState());
         // Keep the confirm button reachable above the on-screen keyboard.
         this.joinRoomIdInput.addEventListener('focus', () => {
             setTimeout(() => {
@@ -249,6 +252,13 @@ class ComChat {
     showJoinInput() {
         this.joinGroup.classList.remove('hidden');
         this.joinRoomIdInput.focus();
+        this.updateJoinReadyState();
+    }
+
+    updateJoinReadyState() {
+        const ready = this.joinRoomIdInput.value.trim().length > 0;
+        this.confirmJoinBtn.classList.toggle('btn-ready', ready);
+        this.joinRoomBtn.classList.toggle('btn-dimmed', ready);
     }
 
     async createRoom() {
@@ -2345,6 +2355,7 @@ class ComChat {
         this.roomInfoDiv.classList.add('hidden');
         this.joinGroup.classList.add('hidden');
         this.joinRoomIdInput.value = '';
+        this.updateJoinReadyState();
     }
 
     showCallScreen() {

@@ -169,6 +169,43 @@ body {
     transform: translateY(-2px);
 }
 
+/* ルームID入力後の誘導: 「参加する」を息をするように強調し、「ルーム参加」はグレーに落とす。
+   IDを入れた後に誤って「ルーム参加」を再度押す誤操作を防ぐ(JS updateJoinReadyStateが付け外し)。
+   .btn.付きの二重クラスで .btn-secondary(:hover) より詳細度を上げて確実に上書きする。 */
+.btn.btn-ready {
+    background: linear-gradient(45deg, #667eea, #764ba2);
+    color: white;
+    border-color: transparent;
+    animation: btn-breathe 1.8s ease-in-out infinite;
+}
+
+.btn.btn-ready:hover {
+    background: linear-gradient(45deg, #667eea, #764ba2);
+}
+
+@keyframes btn-breathe {
+    0%, 100% {
+        opacity: 1;
+        box-shadow: 0 6px 18px rgba(102, 126, 234, 0.45);
+    }
+    50% {
+        opacity: 0.55;
+        box-shadow: 0 0 0 rgba(102, 126, 234, 0);
+    }
+}
+
+.btn.btn-dimmed {
+    background: #ced4da;
+    color: #868e96;
+    border-color: #ced4da;
+}
+
+.btn.btn-dimmed:hover {
+    background: #ced4da;
+    transform: none;
+    box-shadow: none;
+}
+
 /* Input fields */
 .input-group {
     margin: 20px 0;
