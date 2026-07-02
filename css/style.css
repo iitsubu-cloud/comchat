@@ -1145,14 +1145,18 @@ body {
         height: auto; /* aspect-ratio(16:9)に高さを委ねる。stretchで縦に伸びるのを防ぐ */
     }
 
-    /* 通話画面は全画面固定・スクロールなしのアプリ風レイアウト */
-    .container:has(#call-screen:not(.hidden)) {
+    /* 通話画面は全画面固定・スクロールなしのアプリ風レイアウト。
+       in-callクラスはJS(showCallScreen/showWelcomeScreen)が付け外しする。
+       以前は :has(#call-screen:not(.hidden)) で判定していたが、:has()は
+       Safari 15.4未満・Chrome 105未満で丸ごと無視され通話画面レイアウトが
+       崩れるため、全ブラウザで確実なクラス切替に変更した。 */
+    .container.in-call {
         height: 100svh;
         min-height: 100svh;
         overflow: hidden;
     }
 
-    .container:has(#call-screen:not(.hidden)) .main-content {
+    .container.in-call .main-content {
         flex: 1;
         min-height: 0;
         overflow: hidden;

@@ -2341,6 +2341,7 @@ class ComChat {
     showWelcomeScreen() {
         this.welcomeScreen.classList.remove('hidden');
         this.callScreen.classList.add('hidden');
+        document.querySelector('.container')?.classList.remove('in-call');
         this.roomInfoDiv.classList.add('hidden');
         this.joinGroup.classList.add('hidden');
         this.joinRoomIdInput.value = '';
@@ -2349,6 +2350,9 @@ class ComChat {
     showCallScreen() {
         this.welcomeScreen.classList.add('hidden');
         this.callScreen.classList.remove('hidden');
+        // モバイルの全画面固定レイアウト用。CSSの :has() 判定はSafari 15.4未満等で
+        // 無視されるため、クラス切替で全ブラウザに対応する(style.css .container.in-call)
+        document.querySelector('.container')?.classList.add('in-call');
         // 入室時にページスクロールを先頭へ戻す。参加前にルームID入力欄へフォーカスすると
         // confirmJoinBtnへscrollIntoViewした分のスクロールが残り、通話画面でヘッダーが
         // 画面外(上)へずれる問題があるため。あわせてキーボードも閉じる(iOS)。
