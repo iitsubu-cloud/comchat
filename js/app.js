@@ -1198,6 +1198,10 @@ class ComChat {
             this.callMain.classList.add('presenter-mode');
             this.shareViewerLabel.classList.add('hidden');
             this.stopShareBtn.classList.remove('hidden');
+            // presenter-mode切替直後に再レイアウト。モバイル3人以上でタイルに付くインラインwidthは
+            // サムネイル帯のCSS(width:160px)より優先されるため、ここで即時除去する
+            // (ResizeObserverでも後追い除去されるが、発火は非同期で1フレーム乱れる)
+            this.relayoutVideoGrid();
 
             screenVideoTrack.onended = () => this.stopScreenShare();
 
@@ -1237,6 +1241,7 @@ class ComChat {
         this.shareViewerLabel.style.bottom = '';
         this.shareViewerLabel.style.left = '';
         this.shareViewerLabel.style.zIndex = '';
+        this.relayoutVideoGrid();
     }
 
     exitRemotePresenterMode() {
@@ -1247,6 +1252,7 @@ class ComChat {
         this.screenShareContainer.classList.add('hidden');
         this.callMain.classList.remove('presenter-mode');
         this.shareViewerLabel.classList.add('hidden');
+        this.relayoutVideoGrid();
     }
 
     stopScreenShare() {
@@ -1285,6 +1291,7 @@ class ComChat {
 
         this.callMain.classList.remove('presenter-mode');
         this.stopShareBtn.classList.add('hidden');
+        this.relayoutVideoGrid();
         this.currentScreenStream = null;
         this.shareScreenBtn.classList.remove('active');
         this.broadcast({ type: 'screen-share-stop' });
