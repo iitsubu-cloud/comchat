@@ -2,7 +2,7 @@
 
 **最終更新**: 2026-07-02（セッション21）
 **プロジェクト**: ComChat (完全無料P2Pビデオ会議アプリ)
-**進捗状況（セッション21）**: **全コードのバグ調査**（app.js 2428行＋index.html＋style.css、セッション17以来の通し点検）を実施。致命的バグはゼロ、所見3件を発見し2件を修正した。**所見①（修正済み・app.js v92）**: `presenter-mode` クラスを切り替える4箇所（`shareScreen`/`stopScreenShare`/`enterRemotePresenterMode`/`exitRemotePresenterMode`）が `relayoutVideoGrid()` を呼んでおらず、モバイル3人以上でタイルのインラインwidth（`calc(50% - 4px)`）が画面共有サムネイル帯（CSS `width:160px`）に残留していた。ResizeObserverで後追い修正されるため実害は1フレーム程度だが、4箇所で同期的に再レイアウトするよう修正。**所見②（修正済み・app.js v93 / style.css v39）**: モバイル通話画面の全画面固定レイアウトを `.container:has(#call-screen:not(.hidden))` で判定していたが、`:has()` は Safari 15.4未満・Chrome 105未満で丸ごと無視される。`showCallScreen`/`showWelcomeScreen` で `.container` に `in-call` クラスを付け外しし CSS は `.container.in-call` で判定する方式へ変更（セッション18の申し送り「他の:has()使用箇所の確認」の恒久対応）。**所見③（現状維持と合意）**: グループファイル送信中にピアが切断すると `waitForBuffers` の `Promise.all` が5秒タイムアウトまで待つストールがありうるが、稀な条件かつデータ破損なしのため対応せず。さらにユーザー要望2件を実装：**タブタイトルを「完全無料ビデオ会議」→「無料ビデオ会議」に変更**、**ルームID入力後の誤操作対策（app.js v94 / style.css v40）**＝ID欄に入力があるあいだ「参加する」ボタンを紫グラデーション＋opacity 1↔0.55の呼吸アニメ(1.8s)で強調し「ルーム参加」ボタンをグレー化（`updateJoinReadyState`、ID削除・ウェルカム復帰で解除。ルーム参加は無効化せず押せるまま）。**全変更デプロイ済み・Chromiumプレビュー検証OK・`v3.8-stable` 付与。ただし実機確認は未実施（次回冒頭に実施）**。
+**進捗状況（セッション21）**: **全コードのバグ調査**（app.js 2428行＋index.html＋style.css、セッション17以来の通し点検）を実施。致命的バグはゼロ、所見3件を発見し2件を修正した。**所見①（修正済み・app.js v92）**: `presenter-mode` クラスを切り替える4箇所（`shareScreen`/`stopScreenShare`/`enterRemotePresenterMode`/`exitRemotePresenterMode`）が `relayoutVideoGrid()` を呼んでおらず、モバイル3人以上でタイルのインラインwidth（`calc(50% - 4px)`）が画面共有サムネイル帯（CSS `width:160px`）に残留していた。ResizeObserverで後追い修正されるため実害は1フレーム程度だが、4箇所で同期的に再レイアウトするよう修正。**所見②（修正済み・app.js v93 / style.css v39）**: モバイル通話画面の全画面固定レイアウトを `.container:has(#call-screen:not(.hidden))` で判定していたが、`:has()` は Safari 15.4未満・Chrome 105未満で丸ごと無視される。`showCallScreen`/`showWelcomeScreen` で `.container` に `in-call` クラスを付け外しし CSS は `.container.in-call` で判定する方式へ変更（セッション18の申し送り「他の:has()使用箇所の確認」の恒久対応）。**所見③（現状維持と合意）**: グループファイル送信中にピアが切断すると `waitForBuffers` の `Promise.all` が5秒タイムアウトまで待つストールがありうるが、稀な条件かつデータ破損なしのため対応せず。さらにユーザー要望2件を実装：**タブタイトルを「完全無料ビデオ会議」→「無料ビデオ会議」に変更**、**ルームID入力後の誤操作対策（app.js v94 / style.css v40）**＝ID欄に入力があるあいだ「参加する」ボタンを紫グラデーション＋opacity 1↔0.55の呼吸アニメ(1.8s)で強調し「ルーム参加」ボタンをグレー化（`updateJoinReadyState`、ID削除・ウェルカム復帰で解除。ルーム参加は無効化せず押せるまま）。**全変更デプロイ済み・Chromiumプレビュー検証OK・`v3.8-stable` 付与。実機確認も完了（2026-07-03・①タイトル②参加ボタン誘導UI③通話画面レイアウト④画面共有すべてOK）→ `v3.8-stable` 正式確定**。
 
 **（旧）進捗状況（セッション20）**: セッション19までで未解決だった **iPad Air2 縦向きの映像グリッド列数固着** に対し、**アプローチを転換**して修正(app.js v90 / style.css v37)。症状「回転させると直る＝`grid-template-columns` の値は変えずフル再レイアウトで直る」から、原因は **Safari15系がCSS Gridの列トラック変更を子タイルの再配置に反映しない描画バグ** とほぼ断定。`:has()` も JS の `grid-template-columns` も `display:none→''` のツリー再構築も効かなかった（＝グリッドを使う限り固着する）ため、**モバイル(≤768px)だけ CSS Grid をやめ flexbox に変更**。列数は `relayoutVideoGrid` が各タイルの `width`(1〜2人=100%/3人以上=`calc(50% - 4px)`)で決める方式に。flex は「子の width 変更」を確実に再レイアウトするためグリッド固有の固着バグを踏まない。PC(≥769px)は従来の grid ロジックのまま無変更（モバイルで付与した inline width は wide/presenter 分岐で除去）。**Chromiumプレビューで検証OK**：375px幅で 1人→1列/2人→1列(縦積み)/3〜4人→2列、さらに **4→3→2 と減らしても列数が正しく戻る**（Safariが grid で失敗していた挙動）。`?griddbg=1` は flex 用に表示更新(display/tileW computed)して**残置**（実機で確認するため）。**未タグ・デプロイ済み想定**。**【実機フィードバック→追加修正 css v38】**：SE3/iPad Air2 実機で3人=2列になったものの、**タイルが縦に間延びして16:9が崩れる**不具合が出た（iPadは回転後さらに悪化）。原因＝モバイル `.video-grid` の `align-content: start` を Safari15系が認識せず初期値 `stretch` に落ち、背の高いグリッド領域いっぱいに行を引き伸ばし＋`align-items` 既定の `stretch` でタイルも縦伸び。→ `align-content: flex-start` ＋ `align-items: flex-start` ＋ `.video-container { height:auto }` に修正（`align-items:flex-start` が本命の安全弁：行が伸びてもタイルはaspect-ratioの自然な高さを保ち上詰めになる）。Chromium 768pxで 1/2人=1列16:9・3人=2列16:9(364×205)・上詰めを確認。**【実機OK・完了】全端末(iPhone SE3・iPad Air2縦・M4 MBA)で3人=2列・16:9維持・回転しても崩れないことを確認。→ `?griddbg=1` 診断オーバーレイと `_updateGridDebug` を撤去(app.js v91)し `v3.7-stable` を付与**。長年の iPad Air2 縦向き列数固着はこれで解決。
 
@@ -401,7 +401,7 @@
 ## 📊 現在のGit状態
 
 - **ブランチ**: main
-- **最新安定タグ**: **v3.8-stable**（バグ調査所見①②修正＋タイトル変更＋参加ボタン誘導UI。**プレビュー検証のみ・実機確認は次回**）
+- **最新安定タグ**: **v3.8-stable**（バグ調査所見①②修正＋タイトル変更＋参加ボタン誘導UI。**実機確認済み・2026-07-03 正式確定**）
 - **JSバージョン**: app.js?v=94（presenter切替relayout・in-callクラス・updateJoinReadyState）
 - **CSSバージョン**: style.css?v=40（.container.in-call・btn-ready呼吸アニメ・btn-dimmedグレー化）
 - **診断ページ**: diag.html（端末の値取得用）のみ。`?griddbg=1` は撤去済み
@@ -439,7 +439,7 @@
 - `v3.5-stable` — 参加フローのバグ2件修正（存在しないルーム参加で取り残される／失敗後の同ID再参加で入室できる）＋死んだhas-unread除去
 - `v3.6-stable` — チャット送信ボタン見切れ修正（iPad Air2横向き等・style.css v34）実機OK
 - `v3.7-stable` — モバイル映像グリッドを Grid→flexbox に転換し iPad Air2縦の列数固着を解決＋16:9維持（app.js v91 / style.css v38）全端末実機OK
-- `v3.8-stable` — バグ調査所見①②修正（presenter切替relayout・:has()→in-callクラス化）＋タイトル変更＋ルームID入力後の参加ボタン誘導UI（app.js v94 / style.css v40）**実機確認待ち** ← 最新
+- `v3.8-stable` — バグ調査所見①②修正（presenter切替relayout・:has()→in-callクラス化）＋タイトル変更＋ルームID入力後の参加ボタン誘導UI（app.js v94 / style.css v40）**実機確認済み・2026-07-03 正式確定** ← 最新
 
 ---
 
@@ -459,13 +459,8 @@
 
 ## 🔄 次回の作業候補
 
-### 【最優先・次セッション冒頭】セッション21変更（v92〜v94・v3.8-stable）の実機確認
-すべてデプロイ済み。iPhone SE3（あればiPad Air2も）で以下を確認する：
-- [ ] **タブタイトル**が「ComChat - 無料ビデオ会議」になっている
-- [ ] **参加ボタン誘導UI**：ルームIDを入力すると「参加する」が紫＋呼吸アニメになり「ルーム参加」がグレーになる。IDを消すと元に戻る
-- [ ] **通話画面レイアウト（所見②のin-call化）**：入室で全画面固定（ヘッダーずれ・ページスクロールなし）→退室でウェルカム画面が正常表示。従来と同じ挙動ならOK
-- [ ] **画面共有（所見①）**：3人以上で画面共有の開始→終了時にサムネイル帯とグリッドが乱れない
-- 問題があれば修正して `v3.8-stable` を付け直し（`git tag -d v3.8-stable && git push origin :refs/tags/v3.8-stable` → 再付与）
+### （完了）セッション21変更（v92〜v94・v3.8-stable）の実機確認
+2026-07-03 に iPhone で実機確認完了。①タブタイトル②参加ボタン誘導UI③通話画面レイアウト（in-call化）④画面共有、すべてOK。**`v3.8-stable` 正式確定**。
 
 ### （完了）セッション20 flex化修正の iPad Air2 実機最終確認
 セッション20で **モバイルを Grid→flexbox に転換**して列数固着を修正済み(app.js v90 / css v37・デプロイ済み)。**iPad Air2（縦）で最終確認**する：
