@@ -128,6 +128,13 @@ class ComChat {
             e.preventDefault();
             const roomId = this.joinRoomIdInput.value.trim();
             if (!roomId) { this.showStatus('ルームIDを入力してください', 'error'); return; }
+            // joinRoomと同じサニタイズで事前検証する。全角数字等でIDが空になる入力を
+            // ここで弾かないと、プリコール(カメラ取得・ボタン無効化)まで進んだ後に
+            // joinRoomが早期returnし、カメラ掴みっぱなし＋ボタン無効のまま詰む。
+            if (!roomId.toLowerCase().replace(/[^0-9a-z]/g, '')) {
+                this.showStatus('ルームIDは半角英数字で入力してください', 'error');
+                return;
+            }
             this.showPreCallDialog('join');
         });
         // ルームID入力中は「参加する」を呼吸アニメで強調し「ルーム参加」をグレー化。
@@ -311,7 +318,20 @@ class ComChat {
         // Strip iOS smart punctuation / auto-capitalization; room IDs are lowercase [0-9a-z]
         const roomId = this.joinRoomIdInput.value.trim().toLowerCase().replace(/[^0-9a-z]/g, '');
         if (!roomId) {
-            this.showStatus('ルームIDを入力してください', 'error');
+            // 通常はform submit側の事前検証で弾かれるが、万一ここに来た場合は
+            // プリコールで取得したカメラ/フィルターを解放しボタンを復元する(詰み防止の保険)。
+            // この早期returnはtry/catchの前なのでcatchのクリーンアップが走らない。
+            this.stopBgFilterLoop();
+            this.cleanupBgFilterResources();
+            this.bgFilterType = 'none';
+            if (this.localStream) {
+                this.localStream.getTracks().forEach(t => t.stop());
+                this.localStream = null;
+            }
+            this.createRoomBtn.disabled = false;
+            this.joinRoomBtn.disabled = false;
+            this.confirmJoinBtn.disabled = false;
+            this.showStatus('ルームIDは半角英数字で入力してください', 'error');
             return;
         }
         this.isConnecting = true;
@@ -714,7 +734,9 @@ class ComChat {
                 this.enterRemotePresenterMode(data.peerId, data.username);
                 break;
             case 'screen-share-stop':
-                this.exitRemotePresenterMode();
+                // 現在の共有者からの停止通知だけ処理する。共有が重なった場合(A共有中に
+                // B開始→A停止)、無条件に解除するとBの共有を見ている全員が誤って解除される。
+                if (senderId === this.currentRemoteSharerId) this.exitRemotePresenterMode();
                 break;
             case 'file-meta': {
                 const senderName = this.usernames.get(senderId) || senderId;
@@ -1226,6 +1248,11 @@ class ComChat {
     }
 
     enterRemotePresenterMode(sharerPeerId, sharerUsername) {
+        // 自分が共有中に他の人が共有を開始したら、自分の共有を停止して譲る(後勝ち)。
+        // 止めないと stopShareBtn が隠されて自分の共有を止めるUIが消えてしまう。
+        // 自分の stopScreenShare が broadcast する 'screen-share-stop' は、受信側の
+        // senderId ガード(現在の共有者のみ処理)により新しい共有者の表示を壊さない。
+        if (this.currentScreenStream) this.stopScreenShare();
         this.currentRemoteSharerId = sharerPeerId;
 
         // Audio plays from the sharer's grid thumbnail; mute here to avoid double playback.
