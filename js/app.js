@@ -251,8 +251,18 @@ class ComChat {
         });
         this.precallConfirmBtn.addEventListener('click', () => this.confirmPreCall());
         this.precallCancelBtn.addEventListener('click', () => this.cancelPreCall());
+        // バックドロップタップでキャンセル。ただし「押し始め(pointerdown)も背景」の場合に
+        // 限定する。iOSはキーボード表示直後などにfixed要素のタップ判定がずれることがあり、
+        // ボタンを押したつもりのタップがclickだけ背景判定になって誤キャンセルされるため。
+        // (PointerEvent非対応の旧Safariでは _precallPressTarget が undefined のままなので
+        //  従来どおり click のみで判定される)
+        this.precallDialog.addEventListener('pointerdown', (e) => {
+            this._precallPressTarget = e.target;
+        });
         this.precallDialog.addEventListener('click', (e) => {
-            if (e.target === this.precallDialog) this.cancelPreCall();
+            if (e.target !== this.precallDialog) return;
+            if (this._precallPressTarget !== undefined && this._precallPressTarget !== this.precallDialog) return;
+            this.cancelPreCall();
         });
     }
 
@@ -2150,6 +2160,12 @@ class ComChat {
 
     async showPreCallDialog(action) {
         if (this.isConnecting || this.localStream) return;
+        // iOSでソフトキーボードが開いたまま(ルームID入力直後)fixedのダイアログを出すと、
+        // 描画位置とタップ判定がずれ、ボタンを押したつもりが背景(バックドロップ)判定に
+        // なって即キャンセルされたり、以後のタップが全く効かなくなる。先にキーボードを
+        // 閉じてスクロールを先頭へ戻してから開く(showCallScreenと同じ対策)。
+        if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+        window.scrollTo(0, 0);
         this.isConnecting = true;
         this.createRoomBtn.disabled = true;
         this.joinRoomBtn.disabled = true;
