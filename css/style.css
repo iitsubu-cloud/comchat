@@ -316,15 +316,21 @@ body {
     height: 16px;
 }
 
-/* Presenter layout (screen sharing) */
-.call-main.presenter-mode {
-    position: relative;
-}
+/* Presenter layout (screen sharing)
+   共有画面はオーバーレイ(absolute inset:0)ではなく通常フローのflexカラムで組む。
+   以前はcall-main全体をabsoluteで覆っていたため、コントロールバー/ルーム情報が
+   共有画面の裏に隠れて全環境で操作不能になり、サムネイル帯も共有映像の上に
+   被さって上部が見えなかった。orderで「サムネイル帯→共有画面→コントロール→
+   ルーム情報」の縦並びにする(call-mainは元からflexカラム)。 */
+.call-main.presenter-mode > .video-grid { order: 1; }
+.call-main.presenter-mode > #screen-share-container { order: 2; }
+.call-main.presenter-mode > .controls { order: 3; }
+.call-main.presenter-mode > .room-info { order: 4; }
 
 #screen-share-container {
-    position: absolute;
-    inset: 0;
-    z-index: 1;
+    position: relative; /* stop-share-btn/share-viewer-labelのabsolute基準 */
+    flex: 1 1 0;
+    min-height: 0;
     background: #000;
     border-radius: 10px;
     overflow: hidden;
@@ -381,17 +387,24 @@ body {
 }
 
 .call-main.presenter-mode .video-grid {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    right: 10px;
-    z-index: 2;
     display: flex;
     flex-direction: row;
+    /* モバイル(≤768px)の .video-grid { flex-wrap:wrap } を上書きする。折り返すと
+       3人目以降が2行目に回り height でクリップされ、横スクロールもできなくなる */
+    flex-wrap: nowrap;
+    /* centerだと、あふれた左端のタイルへスクロールで届かなくなるため左詰めにする */
+    justify-content: flex-start;
+    align-items: center;
+    align-content: flex-start;
     gap: 8px;
-    flex: none;
+    flex: 0 0 auto;
+    height: auto;
+    min-height: 0;
     overflow-x: auto;
-    height: 90px;
+    overflow-y: hidden;
+    padding-bottom: 4px;
+    margin-bottom: 8px;
+    -webkit-overflow-scrolling: touch; /* 旧iOSで慣性スクロールを有効化 */
 }
 
 .call-main.presenter-mode .video-container {
