@@ -56,6 +56,10 @@ class ComChat {
         this.mixSources = [];
         this.isLeaving = false;
         this.isReconnecting = false;
+        // 発話インジケーター(active speaker detection)
+        this.speakingAudioContext = null;   // 解析専用のAudioContext(通話開始時に生成)
+        this.speakingAnalysers = new Map();  // id('local'|peerId) -> { analyser, source, data, speaking, quietSince }
+        this.speakingLoopTimer = null;       // 全員を1本のループで計測するタイマー
         this.unreadCount = 0;
         this.isChatVisible = true;
         this.chatObserver = null;
@@ -300,6 +304,7 @@ class ComChat {
         } catch (error) {
             this.stopBgFilterLoop();
             this.cleanupBgFilterResources();
+            this.teardownSpeakingDetection();
             this.bgFilterType = 'none';
             if (this.localStream) {
                 this.localStream.getTracks().forEach(t => t.stop());
@@ -362,6 +367,7 @@ class ComChat {
         } catch (error) {
             this.stopBgFilterLoop();
             this.cleanupBgFilterResources();
+            this.teardownSpeakingDetection();
             this.bgFilterType = 'none';
             if (this.localStream) {
                 this.localStream.getTracks().forEach(t => t.stop());
@@ -506,6 +512,9 @@ class ComChat {
         const displayStream = (this.bgFilterType !== 'none' && this.bgFilterStream)
             ? this.bgFilterStream : this.localStream;
         this.addVideoElement('local', displayStream, this.username);
+        // 発話インジケーター: 自分のマイク「生トラック」を解析対象にする(displayStreamは
+        // 画面共有中に映像だけのcanvasストリームになりうるため、必ずlocalStreamを使う)
+        this.attachSpeakingAnalyser('local', this.localStream);
     }
 
     // ホストへの参加時は、データ接続が実際に開くまで待つ。開かなければ reject し、
@@ -675,6 +684,8 @@ class ComChat {
         call.on('stream', (remoteStream) => {
             const label = this.usernames.get(call.peer) || call.peer;
             this.addVideoElement(call.peer, remoteStream, label);
+            // 発話インジケーター: このリモートの受信ストリームに解析を接続
+            this.attachSpeakingAnalyser(call.peer, remoteStream);
             // 画面共有中に遅れて参加した場合、共有画面を大画面に反映する
             if (this.currentRemoteSharerId === call.peer) {
                 this.screenShareVideo.srcObject = remoteStream;
@@ -874,6 +885,8 @@ class ComChat {
     }
 
     removeVideoElement(id) {
+        // 発話インジケーターのAnalyserを破棄(タイル削除と同時に必ず解放してリークを防ぐ)
+        this.detachSpeakingAnalyser(id);
         const videoElement = document.getElementById(`video-${id}`);
         if (videoElement) {
             const video = videoElement.querySelector('video');
@@ -1381,6 +1394,160 @@ class ComChat {
         this.mixedAudioTrack = null;
         if (this.mixAudioContext) { try { this.mixAudioContext.close(); } catch {} }
         this.mixAudioContext = null;
+    }
+
+    // ===== 発話インジケーター (active speaker detection) =====
+    // しきい値・ヒステリシスの設定値
+    static get SPEAK_ON_RMS() { return 0.045; }   // これ以上のRMSで発話とみなす(環境ノイズで誤点灯しない程度)
+    static get SPEAK_OFF_RMS() { return 0.030; }  // 一度点灯後、これを下回ると無音判定を開始(ヒステリシス)
+    static get SPEAK_HOLD_MS() { return 500; }    // 無音がこの時間続いたら消灯(ちらつき防止)
+    static get SPEAK_INTERVAL_MS() { return 150; }// 全員を計測するループ間隔
+
+    // 解析専用のAudioContextを用意する。通話開始(ユーザージェスチャ後)に呼ばれる。
+    // 画面共有の音声ミックス(mixAudioContext)とは別インスタンスにして干渉を避ける。
+    ensureSpeakingAudioContext() {
+        if (!this.speakingAudioContext) {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) return null;
+            try {
+                this.speakingAudioContext = new AudioCtx();
+            } catch {
+                this.speakingAudioContext = null;
+                return null;
+            }
+        }
+        // Safari等ではユーザージェスチャ直後でもsuspendedで生成されることがある
+        if (this.speakingAudioContext.state === 'suspended') {
+            this.speakingAudioContext.resume().catch(() => {});
+        }
+        return this.speakingAudioContext;
+    }
+
+    // 指定IDのMediaStreamにAnalyserNodeを接続する。
+    // id='local' は必ず「マイクの生トラック」を解析対象にする(画面共有中のミックス音声で
+    // 自分が点灯しないようにするため — 仕様#7)。リモートは受信ストリームをそのまま使う。
+    attachSpeakingAnalyser(id, stream) {
+        const ctx = this.ensureSpeakingAudioContext();
+        if (!ctx || !stream) return;
+        const audioTrack = stream.getAudioTracks && stream.getAudioTracks()[0];
+        if (!audioTrack) return;
+        // 既存があれば作り直す(再入室・トラック差し替え対策)
+        this.detachSpeakingAnalyser(id);
+        try {
+            // 単一トラックのStreamを渡す。localは画面共有ミックスではなく生マイクを保証。
+            const source = ctx.createMediaStreamSource(new MediaStream([audioTrack]));
+            const analyser = ctx.createAnalyser();
+            analyser.fftSize = 512;          // 軽量。time domainの振幅計測には十分
+            analyser.smoothingTimeConstant = 0.3;
+            source.connect(analyser);
+            // 注意: analyserをdestinationに繋がない(音は既にvideo要素から再生されており、
+            // 繋ぐと二重再生やエコーの原因になる。解析はdestination未接続でも動作する)
+            this.speakingAnalysers.set(id, {
+                analyser,
+                source,
+                data: new Uint8Array(analyser.fftSize),
+                speaking: false,
+                quietSince: 0,
+            });
+        } catch (e) {
+            // 一部ブラウザで既に解析中トラック等の理由で失敗しても通話は継続する
+        }
+        this.startSpeakingLoop();
+    }
+
+    detachSpeakingAnalyser(id) {
+        const entry = this.speakingAnalysers.get(id);
+        if (!entry) return;
+        try { entry.source.disconnect(); } catch {}
+        try { entry.analyser.disconnect(); } catch {}
+        this.speakingAnalysers.delete(id);
+        this.setSpeakingIndicator(id, false);
+    }
+
+    startSpeakingLoop() {
+        if (this.speakingLoopTimer != null) return;
+        this.speakingLoopTimer = setInterval(() => this.updateSpeakingStates(), ComChat.SPEAK_INTERVAL_MS);
+    }
+
+    stopSpeakingLoop() {
+        if (this.speakingLoopTimer != null) {
+            clearInterval(this.speakingLoopTimer);
+            this.speakingLoopTimer = null;
+        }
+    }
+
+    // ミュート中は点灯させない。自分は音声トラックのenabled/isAudioMuted、
+    // リモートはmuteStates(相手が同期してくるミュート状態)で判定する。
+    isParticipantMuted(id) {
+        if (id === 'local') {
+            const track = this.localStream && this.localStream.getAudioTracks()[0];
+            // トラックがdisabledなら実際に音は出ていない。isAudioMutedも併用。
+            if (track && !track.enabled) return true;
+            return !!this.isAudioMuted;
+        }
+        return !!this.muteStates.get(id);
+    }
+
+    // 全員分を1本のループで計測。しきい値+ヒステリシス+消灯ホールドで判定し、
+    // 状態が変化したタイル(DOM)だけを更新する(ループ内の無駄なDOM操作を避ける)。
+    updateSpeakingStates() {
+        const now = (typeof performance !== 'undefined' && performance.now)
+            ? performance.now() : Date.now();
+        this.speakingAnalysers.forEach((entry, id) => {
+            const muted = this.isParticipantMuted(id);
+            let rms = 0;
+            if (!muted) {
+                const buf = entry.data;
+                entry.analyser.getByteTimeDomainData(buf);
+                let sumSq = 0;
+                for (let i = 0; i < buf.length; i++) {
+                    const v = (buf[i] - 128) / 128; // -1..1 に正規化
+                    sumSq += v * v;
+                }
+                rms = Math.sqrt(sumSq / buf.length);
+            }
+
+            if (entry.speaking) {
+                // 点灯中: OFFしきい値を下回る無音がHOLD_MS続いたら消灯(ちらつき防止)
+                if (muted || rms < ComChat.SPEAK_OFF_RMS) {
+                    if (entry.quietSince === 0) entry.quietSince = now;
+                    else if (now - entry.quietSince >= ComChat.SPEAK_HOLD_MS) {
+                        entry.speaking = false;
+                        entry.quietSince = 0;
+                        this.setSpeakingIndicator(id, false);
+                    }
+                } else {
+                    entry.quietSince = 0; // 十分な音量が戻ったので消灯タイマーをリセット
+                }
+            } else {
+                // 消灯中: ONしきい値を超えたら即時点灯
+                if (!muted && rms >= ComChat.SPEAK_ON_RMS) {
+                    entry.speaking = true;
+                    entry.quietSince = 0;
+                    this.setSpeakingIndicator(id, true);
+                }
+            }
+        });
+    }
+
+    // タイルへの.speakingクラス付与。DOM操作は状態変化時のみここで行う。
+    setSpeakingIndicator(id, speaking) {
+        const tile = document.getElementById(`video-${id}`);
+        if (tile) tile.classList.toggle('speaking', speaking);
+    }
+
+    teardownSpeakingDetection() {
+        this.stopSpeakingLoop();
+        this.speakingAnalysers.forEach((entry, id) => {
+            try { entry.source.disconnect(); } catch {}
+            try { entry.analyser.disconnect(); } catch {}
+            this.setSpeakingIndicator(id, false);
+        });
+        this.speakingAnalysers.clear();
+        if (this.speakingAudioContext) {
+            try { this.speakingAudioContext.close(); } catch {}
+            this.speakingAudioContext = null;
+        }
     }
 
     getCSSFilter(type) {
@@ -2314,6 +2481,8 @@ class ComChat {
         this.isReconnecting = false;
         if (this.currentScreenStream) this.stopScreenShare();
         this.teardownMixedAudio();
+        // 発話インジケーター: ループ停止・全Analyser破棄・AudioContext close
+        this.teardownSpeakingDetection();
 
         // Stop bg filter loop before stopping localStream to avoid reading stopped tracks
         this.stopBgFilterLoop();
