@@ -698,6 +698,7 @@ class ComChat {
 
         call.on('stream', (remoteStream) => {
             if (this.isLeaving || !this.peer) return; // hangup済みなら何もしない(遅延streamでタイル/解析が復活するのを防ぐ)
+            if (this.calls.get(call.peer) !== call) return; // 置き換え済みの旧callの遅延streamが新callのタイルを上書きするのを防ぐ
             const label = this.usernames.get(call.peer) || call.peer;
             this.addVideoElement(call.peer, remoteStream, label);
             // 発話インジケーター: このリモートの受信ストリームに解析を接続
@@ -721,12 +722,17 @@ class ComChat {
         });
 
         call.on('close', () => {
+            // 同一ピアのcall置き換え(695-697行)後に旧callのcloseが遅延発火すると、
+            // ピアIDだけをキーに生きている新callの登録とタイルを消してしまうため、
+            // 自分がまだ現在の登録者である場合のみ片付ける
+            if (this.calls.get(call.peer) !== call) return;
             this.calls.delete(call.peer);
             this.removeVideoElement(call.peer);
         });
 
         call.on('error', (err) => {
             console.error('Call error:', err);
+            if (this.calls.get(call.peer) !== call) return; // closeと同じstaleガード
             this.calls.delete(call.peer);
             this.removeVideoElement(call.peer);
         });
@@ -2139,6 +2145,9 @@ class ComChat {
         const localVideoEl = document.querySelector('#video-local .video-element');
 
         if (type === 'none') {
+            // 進行中の初回セットアップ(下のawait待機中)を無効化する。中間生成物は
+            // 直後のcleanupBgFilterResourcesが回収し、stale側はgen不一致で静かに退く
+            this._bgFilterGen = (this._bgFilterGen || 0) + 1;
             this.stopBgFilterLoop();
             this.cleanupBgFilterResources();
             if (localVideoEl) {
@@ -2191,6 +2200,13 @@ class ComChat {
         }
 
         // First activation
+        // 世代トークン: セットアップは下のawait(grabFrame/loadeddata/モデルDL)で数秒待ちうる。
+        // 待機中に「なし」→再設定が割り込むと2つのセットアップが並走し、rAFループ二重化・
+        // captureStreamトラック孤立・null化されたbgSourceVideo参照が起こるため、
+        // 各await後にgenを確認しstaleなら退く(genを進めるのはnoneパスとここだけ。
+        // wasActive=trueの型変更はループが動的に追従するのでgenに触らない)
+        this._bgFilterGen = (this._bgFilterGen || 0) + 1;
+        const gen = this._bgFilterGen;
         this.syncFilterBtnState();
 
         try {
@@ -2206,6 +2222,7 @@ class ComChat {
                     srcW = probe.width;
                     srcH = probe.height;
                     probe.close();
+                    if (gen !== this._bgFilterGen) return; // 待機中に割り込みあり: 後続呼び出しに任せて退く
                     this.imageCapture = ic;
                 } catch (icErr) {
                     console.warn('ImageCapture unavailable:', icErr);
@@ -2231,6 +2248,9 @@ class ComChat {
                         setTimeout(r, 5000);
                     });
                 }
+                // 待機中に'none'が割り込むとcleanupBgFilterResourcesがbgSourceVideoを
+                // 除去・null化しているため、参照前に必ずgenを確認する
+                if (gen !== this._bgFilterGen) return;
                 srcW = this.bgSourceVideo.videoWidth;
                 srcH = this.bgSourceVideo.videoHeight;
             }
@@ -2251,12 +2271,12 @@ class ComChat {
             try {
                 this.showStatus('背景フィルターを読み込み中...', 'connecting');
                 await this.initSelfieSegmentation();
-                if (this.bgFilterType === 'none') {
-                    if (this.imageSegmenter) { this.imageSegmenter.close(); this.imageSegmenter = null; }
-                    this.stopBgFilterLoop();
-                    this.cleanupBgFilterResources();
-                    return;
-                }
+                // 待機中に'none'や再設定が割り込んだら退く('none'パスが必ずgenを進めるため、
+                // gen一致ならbgFilterTypeも'none'ではないことが保証される)。
+                // ここでは何も片付けない: 進行中フィールドは'none'側のcleanupが回収済みで、
+                // 下手に触ると後続呼び出しの生成物を壊す。segmenterが残っても次回
+                // initSelfieSegmentationが再利用するか、hangup時のcleanupで閉じられる。
+                if (gen !== this._bgFilterGen) return;
                 // Pre-allocate compositing canvases (avoids per-frame allocation)
                 this.maskCanvas = document.createElement('canvas');
                 this.maskCanvas.width = srcW;
@@ -2334,6 +2354,9 @@ class ComChat {
             this.showStatus(usedMediaPipe ? '背景フィルターを適用しました' : 'フィルターを適用しました', 'connected');
 
         } catch (err) {
+            // 割り込み後の残骸例外(null化されたリソース参照等)では後続呼び出しの
+            // 生成物を壊さないよう、staleなら何もせず退く
+            if (gen !== this._bgFilterGen) return;
             console.warn('Filter setup failed, using CSS-only mode:', err);
             this.stopBgFilterLoop();
             this.cleanupBgFilterResources();
