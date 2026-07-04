@@ -1,8 +1,8 @@
 # ComChat 開発セッションサマリー
 
-**最終更新**: 2026-07-04（セッション24・バグ調査＋所見5件修正・デプロイ済み・実機確認待ち）
+**最終更新**: 2026-07-04（セッション24・バグ調査5件→`v4.1-stable`確定＋実機フィードバック2件修正・実機確認待ち）
 **プロジェクト**: ComChat (完全無料P2Pビデオ会議アプリ)
-**進捗状況（セッション24）**: 冒頭でセッション23変更の**実機確認が完了（全項目OK）→ `v4.0-stable` 正式確定**（コミット efcec83 でサマリー更新・タグpush済み）。続いて恒例の**全コードのバグ調査**をオーケストレーション方式で実施（Sonnetサブエージェント2体を並列投入＝①app.jsロジック精査②ファイル横断整合性点検、報告は本体が実コードで裏取りして誤検知を排除）。**致命的バグはゼロ**、確定所見4件＋掃除1件をすべて修正した（**コミット 5643f97・app.js v98 / style.css v44・デプロイ済み・実機確認は未実施**）。**所見①（中・修正済み）**: `handleCall` の `call.on('stream')` にhangup済みガードが無く、退室ボタンを押した瞬間に別ピアのメディア接続が確立しかけていた場合、`hangup()` 完了後の遅延streamイベントで (a)ウェルカム画面にゴースト映像タイルが追加され次回入室まで残留しうる、(b)teardown済みの発話検知AudioContext＋setIntervalが `attachSpeakingAnalyser` 経由で再生成され誰も止めない（リーク）。→ データ接続側の既存イディオム（663行 `if (!this.peer) return`）と同形の `if (this.isLeaving || !this.peer) return;` をハンドラ先頭に追加。**所見②（低・修正済み）**: `initializePeer` の `onOpen` に素のデバッグ `console.log('Peer connected with ID:', ...)` が残存→削除。**所見③（低・修正済み）**: `.container.in-call`（height/min-height:100svh）とモバイルチャットボトムシート（height:72svh）に vh フォールバックが無く、svh非対応のSafari 15.0-15.3では宣言ごと無視される（冒頭の `.container` は二段書き済みなのにこの2箇所だけ抜けていた。手持ち端末は全て15.4以上なので実害は現状ゼロ＝予防修正）→ 直前に同値のvh宣言を追加。**所見④（低・防御強化・修正済み）**: 発話検知AudioContextがsuspendedのまま `resume()` に失敗すると（iOSでユーザーアクティベーション失効時）その通話中インジケーターがサイレントに無効化され再試行の機会が無かった→ `registerSpeakingResumeRetry()`/`unregisterSpeakingResumeRetry()` を新設し、次のユーザー操作（`pointerdown`、PointerEvent非対応なら`touchend`）でresumeを再試行。成功(running)/context closed/teardownで解除、多重登録ガードあり、`teardownSpeakingDetection` でも確実に解除。**掃除⑤（修正済み）**: `id="status"` 要素はHTML削除済みで到達不能だった `.status`/`.status.connecting`/`.connected`/`.error` CSS一式（旧833-854行）を削除（JS側の `this.statusDiv` nullガードは意図的な後方互換なので残置。`.toast` 系は使用中につき無傷）。**クリーンだった項目**: ターコイズ化の置換漏れゼロ（旧紫系6色＋紫系全般を3ファイル検索）、ID整合・クラストグルとCSSの対応・innerHTML安全性（全7箇所静的orクリアのみ）・キャッシュバスター・`:has()`残骸、いずれも問題なし。**グレーゾーン（対応不要と判断）**: conn close/errorがcalls側をcloseしない件（call側のclose/errorが別途発火して整合）、生マイクトラックを解析用/ミックス用2つのAudioContextで共有する件（セッション23実機確認で動作OK済み）。**検証**: `node --check` OK・diff精査で仕様外変更なし・エージェントのプレビュー起動確認でコンソールエラーなし。**次回＝軽い実機確認**（変更は非視覚的な防御修正が中心なので1〜2台で通話・発話インジケーター・チャットボトムシートが従来どおり動けば十分）→ **OKなら `v4.1-stable` 付与**。
+**進捗状況（セッション24）**: 冒頭でセッション23変更の**実機確認が完了（全項目OK）→ `v4.0-stable` 正式確定**（コミット efcec83 でサマリー更新・タグpush済み）。続いて恒例の**全コードのバグ調査**をオーケストレーション方式で実施（Sonnetサブエージェント2体を並列投入＝①app.jsロジック精査②ファイル横断整合性点検、報告は本体が実コードで裏取りして誤検知を排除）。**致命的バグはゼロ**、確定所見4件＋掃除1件をすべて修正した（**コミット 5643f97・app.js v98 / style.css v44・デプロイ済み・実機確認は未実施**）。**所見①（中・修正済み）**: `handleCall` の `call.on('stream')` にhangup済みガードが無く、退室ボタンを押した瞬間に別ピアのメディア接続が確立しかけていた場合、`hangup()` 完了後の遅延streamイベントで (a)ウェルカム画面にゴースト映像タイルが追加され次回入室まで残留しうる、(b)teardown済みの発話検知AudioContext＋setIntervalが `attachSpeakingAnalyser` 経由で再生成され誰も止めない（リーク）。→ データ接続側の既存イディオム（663行 `if (!this.peer) return`）と同形の `if (this.isLeaving || !this.peer) return;` をハンドラ先頭に追加。**所見②（低・修正済み）**: `initializePeer` の `onOpen` に素のデバッグ `console.log('Peer connected with ID:', ...)` が残存→削除。**所見③（低・修正済み）**: `.container.in-call`（height/min-height:100svh）とモバイルチャットボトムシート（height:72svh）に vh フォールバックが無く、svh非対応のSafari 15.0-15.3では宣言ごと無視される（冒頭の `.container` は二段書き済みなのにこの2箇所だけ抜けていた。手持ち端末は全て15.4以上なので実害は現状ゼロ＝予防修正）→ 直前に同値のvh宣言を追加。**所見④（低・防御強化・修正済み）**: 発話検知AudioContextがsuspendedのまま `resume()` に失敗すると（iOSでユーザーアクティベーション失効時）その通話中インジケーターがサイレントに無効化され再試行の機会が無かった→ `registerSpeakingResumeRetry()`/`unregisterSpeakingResumeRetry()` を新設し、次のユーザー操作（`pointerdown`、PointerEvent非対応なら`touchend`）でresumeを再試行。成功(running)/context closed/teardownで解除、多重登録ガードあり、`teardownSpeakingDetection` でも確実に解除。**掃除⑤（修正済み）**: `id="status"` 要素はHTML削除済みで到達不能だった `.status`/`.status.connecting`/`.connected`/`.error` CSS一式（旧833-854行）を削除（JS側の `this.statusDiv` nullガードは意図的な後方互換なので残置。`.toast` 系は使用中につき無傷）。**クリーンだった項目**: ターコイズ化の置換漏れゼロ（旧紫系6色＋紫系全般を3ファイル検索）、ID整合・クラストグルとCSSの対応・innerHTML安全性（全7箇所静的orクリアのみ）・キャッシュバスター・`:has()`残骸、いずれも問題なし。**グレーゾーン（対応不要と判断）**: conn close/errorがcalls側をcloseしない件（call側のclose/errorが別途発火して整合）、生マイクトラックを解析用/ミックス用2つのAudioContextで共有する件（セッション23実機確認で動作OK済み）。**検証**: `node --check` OK・diff精査で仕様外変更なし・エージェントのプレビュー起動確認でコンソールエラーなし。**同日中に実機確認3項目OK → `v4.1-stable` 付与・正式確定（2026-07-04）**。続いて実機テストで**新たな不具合報告2件→原因分析・修正（コミット 01bb624・app.js v99 / style.css v45・デプロイ済み・実機確認待ち）**。**報告①（カメラオフでタイルが黒くならず直前画像が固着。SE3は毎回、M4は確率的に発生）**: スクショでSE3のタイルに背景フィルターのリゾート画像だけが残っていたのが決定的ヒント。真因＝`toggleVideo`はフィルター使用時に`stopBgFilterLoop()`→キャンバス黒塗りするが、`startBgFilterLoop`のループ本体は`await grabFrame`等をまたぐ非同期関数で、`cancelAnimationFrame`では**実行中の残り処理（segment→`onSegmentationResults`描画）を止められない**。黒塗りの後に遅延着弾した結果が上書きし、入力はdisabled（黒）→人物マスクゼロ→背景画像だけが描かれて固着（M4で「やり直すと直る」のはレースの典型）。修正2段構え＝**(a)送信側**: `onSegmentationResults`冒頭にカメラオフガード（黒塗り＋`result.close?.()`＋return。resultは関数内解放の契約）、`startCSSFilterLoop`にも同等ガード。**(b)表示側**: `.video-container.camera-off .video-element { visibility:hidden }` を新設し、`toggleVideo`／`camera-state`受信／`addVideoElement`の3箇所で`camera-off`クラスを付け外し。コンテナ背景が#000なので、iOS Safariの「disabledトラックのフレーム固着」等の端末差によらず黒＋中央名を保証。**報告②（ホストが先に退出するとゲストが取り残される・ホストは同IDで再入室不可）**: ルームID＝ホストのPeer IDのため、ホスト退出後は誰も参加できない死んだルームになる（設計上の宿命、セッション12で現状維持と合意していた件）。設計判断として**ホスト退出＝ルーム終了**に変更（Zoomと同じ）。実装は**ゲスト側検知**方式＝`handleConnection`の`conn.on('close')`/`conn.on('error')`冒頭に「`!isLeaving && !isHost && conn.peer === roomId`ならhangup＋『ホストが退出したためルームは終了しました』表示」を追加。ホストからの通知メッセージ方式でなく切断検知なので、**退室ボタン・タブ閉じ・クラッシュ・回線断すべてで同じに動く**。同IDの再入室（ルーム復活）は外部DB等が必要な大工事のため見送り＝解散後は新ルームを作る運用。**検証**: `node --check` OK・diff精査（実装はSonnet、`result.close`漏れ1件を本体レビューで検出し修正）。**次回最優先＝実機確認**（下記チェックリスト）→ **OKなら `v4.2-stable` 付与**。
 
 **（旧）進捗状況（セッション23）**: 今回からオーケストレーション方式（Claude本体が指揮・レビュー、実装はSonnet/Opusサブエージェント）で進行。ユーザー要望の新機能2件を実装・デプロイした（**コミット 7e36fb2・app.js v97 / style.css v43・実機確認は未実施**）。**①カラーテーマのターコイズ化（style.css v42）**: 紫系を全面置換。メイングラデーション `#667eea→#0891b2`(cyan-600)・`#764ba2→#0d9488`(teal-600)、ファイルリンク濃色 `#4f46e5→#0e7490`、淡色背景 `#eef2ff→#e6fbfa`、背景フィルターボタン `#9b59b6→#0f766e`/`#6c3483→#115e59`（他のコントロールボタン緑/青/黄/赤との識別性を保つため意図的にメインと別のteal濃色）。白文字コントラストは旧紫と同等を維持（3.66→3.68。明るい#06b6d4は2.43まで落ちたため不採用）。エラー赤・警告黄・成功緑は意味色なので不変。Safari15対応のためcolor-mix/oklch不使用。**②発話インジケーター（app.js v97 / style.css v43）**: 話している参加者のタイルにアンバー(#fbbf24)の枠3px＋glowを表示（枠色はターコイズテーマと被らないようユーザーと協議しアンバーに決定）。実装＝解析専用AudioContext（画面共有ミックス用`mixAudioContext`とは別）＋各参加者にAnalyserNode(fftSize512)、150ms間隔の単一setIntervalで全員のRMSを計測。しきい値は静的ゲッター `SPEAK_ON_RMS=0.045`(即時点灯)/`SPEAK_OFF_RMS=0.030`(ヒステリシス)/`SPEAK_HOLD_MS=500`(無音継続で消灯＝ちらつき防止)/`SPEAK_INTERVAL_MS=150`。自分の解析は**生マイクトラック**（`localStream`）を使い画面共有ミックス音声での誤点灯を防止。ミュート連動（自分=track.enabled＋isAudioMuted、リモート=muteStates）で点灯抑止。クリーンアップは `removeVideoElement→detachSpeakingAnalyser`、`hangup`/`createRoom`・`joinRoom`のcatch→`teardownSpeakingDetection`(ループ停止＋AudioContext close)。**レビューで1件修正**: 当初の `inset box-shadow` 枠はコンテナ背景に描画され上に被さる映像(.video-element)に遮蔽されて見えないことをデモDOMで発見→ `.speaking::after` オーバーレイ（`border:3px solid #fbbf24; border-radius:inherit; z-index:6; pointer-events:none`）方式に修正。プレゼンターモードのサムネイルは既存borderの色をアンバー化し `::after` は `display:none`（二重枠防止）。検証＝判定ロジック単体テスト7ケース全PASS（即時点灯・500ms猶予・300ms瞬断では消えない・ミュート中は大音量でも非点灯等）、Chromiumプレビューで通常タイル/プレゼンターサムネイルとも枠がくっきり視認・レイアウトシフトなし・`node --check`OK。**次回最優先＝実機確認**（色味の好み確認、発話インジケーターは2台以上で、しきい値の実地調整が必要かも）。**→ 2026-07-04 全項目実機確認OK（カラーテーマ・発話インジケーター・ミュート連動・負荷とも問題なし）→ `v4.0-stable` 正式確定（HEAD にタグ付与・push 済み）。セッション23完了**。
 
@@ -407,9 +407,9 @@
 ## 📊 現在のGit状態
 
 - **ブランチ**: main
-- **最新安定タグ**: **v4.0-stable**（セッション23分・ターコイズ化＋発話インジケーター・実機確認済み・2026-07-04 確定）。**タグ以降の未タグコミット: 5643f97**（バグ調査所見5件修正・デプロイ済み・実機確認待ち→OKなら `v4.1-stable` 候補）
-- **JSバージョン**: app.js?v=98（v98=遅延streamガード・resumeリトライ・console.log削除）**実機未確認**
-- **CSSバージョン**: style.css?v=44（v44=svhのvhフォールバック2箇所・到達不能.status系CSS削除）**実機未確認**
+- **最新安定タグ**: **v4.1-stable**（バグ調査所見5件修正・実機確認済み・2026-07-04 確定）。**タグ以降の未タグコミット: 01bb624**（カメラオフ固着修正＋ホスト退出でルーム終了・デプロイ済み＝公開サイトがv99/v45配信中を実測確認・実機確認待ち→OKなら `v4.2-stable` 候補）
+- **JSバージョン**: app.js?v=99（v99=カメラオフガード(セグメンテーション遅延着弾レース)・camera-offクラス切替・ホスト切断検知でルーム終了）**実機未確認**
+- **CSSバージョン**: style.css?v=45（v45=.video-container.camera-off .video-element{visibility:hidden}追加）**実機未確認**
 - **診断ページ**: diag.html（端末の値取得用）のみ。`?griddbg=1` は撤去済み
 - **解決済み**: iPad Air2縦の映像グリッド列数固着。**Safari15系はCSS Gridの列トラック変更を子タイルの再配置に反映しない描画バグがあり、`:has()`/JSの`grid-template-columns`/`display:none→''`のいずれでも解消しなかった**。→ モバイル(≤768px)は Grid をやめ **flexbox＋各タイルwidth指定(1〜2人=100%/3人以上=calc(50% - 4px))** に転換。さらに Safari15が `align-content:start` を認識せず stretch に落ちてタイルが縦伸びする副作用を `align-content/align-items:flex-start` ＋ `.video-container{height:auto}` で解消。PC(≥769px)は従来のgridロジックのまま無変更。全端末実機OK
 
@@ -447,7 +447,8 @@
 - `v3.7-stable` — モバイル映像グリッドを Grid→flexbox に転換し iPad Air2縦の列数固着を解決＋16:9維持（app.js v91 / style.css v38）全端末実機OK
 - `v3.8-stable` — バグ調査所見①②修正（presenter切替relayout・:has()→in-callクラス化）＋タイトル変更＋ルームID入力後の参加ボタン誘導UI（app.js v94 / style.css v40）**実機確認済み・2026-07-03 正式確定**
 - `v3.9-stable` — バグ調査所見2件（ルームID事前検証・screen-share-stopのsenderIdガード＋共有後勝ち）＋プレゼンターモードのレイアウト刷新（オーバーレイ→flexカラム・コントロールバー復活・サムネイル帯を全環境で横スクロール化）＋iPhoneプリコール誤キャンセル対策（キーボードずれ）（app.js v96 / style.css v41）**全項目実機確認OK・2026-07-03 正式確定**
-- `v4.0-stable` — カラーテーマを紫→ターコイズに全面刷新＋発話インジケーター（話者タイルにアンバー枠＋glow・Analyser計測/ヒステリシス/ミュート連動/クリーンアップ）（app.js v97 / style.css v43）**全項目実機確認OK・2026-07-04 正式確定** ← 最新
+- `v4.0-stable` — カラーテーマを紫→ターコイズに全面刷新＋発話インジケーター（話者タイルにアンバー枠＋glow・Analyser計測/ヒステリシス/ミュート連動/クリーンアップ）（app.js v97 / style.css v43）**全項目実機確認OK・2026-07-04 正式確定**
+- `v4.1-stable` — バグ調査所見5件修正（遅延streamガード・発話検知resumeリトライ・svhのvhフォールバック・console.log/到達不能CSS掃除）（app.js v98 / style.css v44）**実機確認OK・2026-07-04 正式確定** ← 最新
 
 ---
 
@@ -467,12 +468,17 @@
 
 ## 🔄 次回の作業候補
 
-### 最優先：セッション24（バグ修正5件・コミット 5643f97）の軽い実機確認
-変更は非視覚的な防御修正が中心。1〜2台で以下が従来どおり動けばOK：
-- [ ] 通話の基本動作（ルーム作成・参加・退室→再入室）
-- [ ] 発話インジケーターが従来どおり点灯する（resumeリトライ追加の副作用がないこと）
-- [ ] モバイルでチャットボトムシートの高さが従来どおり（72svh＋vhフォールバック追加の副作用がないこと）
-- **全OKなら `v4.1-stable` 付与**
+### 最優先：実機フィードバック2件修正（コミット 01bb624・app.js v99 / style.css v45）の実機確認
+- [ ] **カメラオフの黒塗り**（本命はiPhone SE3×背景フィルター使用時）: フィルターON（リゾート等の背景画像）→カメラオフ→タイルが黒＋中央名になるか。**何度かオン/オフを繰り返しても**画像が固着しないか
+- [ ] フィルターなしでもカメラオフ→黒＋中央名になるか（iOS固有のフレーム固着も解消されているはず）
+- [ ] 相手側の画面でも、カメラオフした参加者のタイルが黒＋中央名になるか
+- [ ] **ホスト退出＝ルーム終了**: ホストが退室ボタンで退出→ゲスト全員に「ホストが退出したためルームは終了しました」が表示されてウェルカム画面へ戻るか
+- [ ] ホストがタブを閉じた場合／機内モードにした場合も同様にゲストが退室になるか（切断検知なので多少のタイムラグはあり得る＝正常）
+- [ ] ゲストの退室では他の参加者に影響がないこと（従来どおり）
+- **全OKなら `v4.2-stable` 付与**
+
+### （完了）セッション24前半（バグ修正5件・コミット 5643f97 → v4.1-stable）の実機確認
+2026-07-04 に3項目（基本動作・発話インジケーター・ボトムシート）実機確認OK → **`v4.1-stable` 正式確定**
 
 ### （完了）セッション23（ターコイズ化＋発話インジケーター・コミット 7e36fb2）の実機確認
 2026-07-04 に全項目実機確認OK → **`v4.0-stable` 正式確定**（HEAD にタグ付与・push 済み）。確認項目：
