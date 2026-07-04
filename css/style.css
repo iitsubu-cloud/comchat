@@ -295,6 +295,12 @@ body {
     font-size: 1.7em;
 }
 
+/* カメラオフ中はvideo要素ごと隠す。disabledトラックの映像フレームが固着する
+   端末(iOS Safari等)でも、コンテナ背景(#000)＋中央名の表示を保証する */
+.video-container.camera-off .video-element {
+    visibility: hidden;
+}
+
 /* マイクミュートインジケーター */
 .mute-indicator {
     position: absolute;

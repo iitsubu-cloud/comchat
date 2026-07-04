@@ -603,6 +603,13 @@ class ComChat {
 
         conn.on('error', (err) => {
             console.error('Connection error:', err);
+            // ホストとの接続が切れたらルームは終了(ルームID=ホストのPeer IDなので以後
+            // 誰も参加できない死んだルームになる。退室ボタン・タブ閉じ・回線断すべて対象)
+            if (!this.isLeaving && !this.isHost && conn.peer === this.roomId) {
+                this.hangup();
+                this.showStatus('ホストが退出したためルームは終了しました', 'error');
+                return;
+            }
             this.connections.delete(conn.peer);
             this.usernames.delete(conn.peer);
             this.muteStates.delete(conn.peer);
@@ -645,6 +652,13 @@ class ComChat {
         });
 
         conn.on('close', () => {
+            // ホストとの接続が切れたらルームは終了(ルームID=ホストのPeer IDなので以後
+            // 誰も参加できない死んだルームになる。退室ボタン・タブ閉じ・回線断すべて対象)
+            if (!this.isLeaving && !this.isHost && conn.peer === this.roomId) {
+                this.hangup();
+                this.showStatus('ホストが退出したためルームは終了しました', 'error');
+                return;
+            }
             this.connections.delete(conn.peer);
             this.usernames.delete(conn.peer);
             this.muteStates.delete(conn.peer);
@@ -751,6 +765,8 @@ class ComChat {
                 this.cameraStates.set(senderId, data.enabled);
                 const cn = document.querySelector(`#video-${senderId} .video-center-name`);
                 if (cn) cn.style.display = data.enabled ? 'none' : 'block';
+                const tile = document.getElementById(`video-${senderId}`);
+                if (tile) tile.classList.toggle('camera-off', !data.enabled);
                 break;
             }
             case 'screen-share-start':
@@ -872,9 +888,13 @@ class ComChat {
         centerName.style.display = 'none';
         if (id === 'local') {
             const vt = this.localStream?.getVideoTracks()[0];
-            if (vt && !vt.enabled) centerName.style.display = 'block';
+            if (vt && !vt.enabled) {
+                centerName.style.display = 'block';
+                videoContainer.classList.add('camera-off');
+            }
         } else if (this.cameraStates.has(id) && !this.cameraStates.get(id)) {
             centerName.style.display = 'block';
+            videoContainer.classList.add('camera-off');
         }
 
         videoContainer.appendChild(video);
@@ -1190,6 +1210,8 @@ class ComChat {
         }
         const localCenterName = document.querySelector('#video-local .video-center-name');
         if (localCenterName) localCenterName.style.display = videoTrack.enabled ? 'none' : 'block';
+        const localTile = document.getElementById('video-local');
+        if (localTile) localTile.classList.toggle('camera-off', !videoTrack.enabled);
         this.broadcast({ type: 'camera-state', enabled: videoTrack.enabled });
     }
 
@@ -1836,6 +1858,17 @@ class ComChat {
     }
 
     onSegmentationResults(result, sourceImage) {
+        // カメラオフ中は常に黒を描く。stopBgFilterLoop後に遅れて着弾した非同期結果が
+        // toggleVideoの黒塗りを上書きして直前フレームが固着するレースを防ぐ(実機SE3で再現)。
+        const camTrack = this.localStream && this.localStream.getVideoTracks()[0];
+        if (camTrack && !camTrack.enabled) {
+            if (this.bgFilterCtx && this.bgFilterCanvas) {
+                this.bgFilterCtx.fillStyle = '#000';
+                this.bgFilterCtx.fillRect(0, 0, this.bgFilterCanvas.width, this.bgFilterCanvas.height);
+            }
+            result.close?.(); // resultはこの関数内で解放する契約(下の'none'パスと同じ)
+            return;
+        }
         if (this.bgFilterType === 'none' || !this.bgFilterCtx) { result.close?.(); return; }
         const ctx = this.bgFilterCtx;
         const w = this.bgFilterCanvas.width;
@@ -2011,6 +2044,15 @@ class ComChat {
     startCSSFilterLoop() {
         const draw = () => {
             if (this.bgFilterType === 'none' || !this.bgFilterCtx) return;
+            // カメラオフ中は常に黒を描き、当該フレームの描画はスキップする
+            // (iOS Safari等でdisabledトラックの映像フレームが固着するのを防ぐ)
+            const camTrack = this.localStream && this.localStream.getVideoTracks()[0];
+            if (camTrack && !camTrack.enabled) {
+                this.bgFilterCtx.fillStyle = '#000';
+                this.bgFilterCtx.fillRect(0, 0, this.bgFilterCanvas.width, this.bgFilterCanvas.height);
+                this.bgFilterAnimId = requestAnimationFrame(draw);
+                return;
+            }
             if (this.imageCapture) {
                 // ImageCapture: grab frame asynchronously, draw when ready
                 this.imageCapture.grabFrame().then(bitmap => {
