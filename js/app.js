@@ -60,6 +60,8 @@ class ComChat {
         this.speakingAudioContext = null;   // 解析専用のAudioContext(通話開始時に生成)
         this.speakingAnalysers = new Map();  // id('local'|peerId) -> { analyser, source, data, speaking, quietSince }
         this.speakingLoopTimer = null;       // 全員を1本のループで計測するタイマー
+        this._speakingResumeHandler = null;
+        this._speakingResumeEvent = null;
         this.unreadCount = 0;
         this.isChatVisible = true;
         this.chatObserver = null;
@@ -413,7 +415,6 @@ class ComChat {
                 settled = true;
                 clearTimeout(timeout);
                 this.peer.off('error', onError);
-                console.log('Peer connected with ID:', peerId);
                 resolve(peerId);
             };
 
@@ -682,6 +683,7 @@ class ComChat {
         this.calls.set(call.peer, call);
 
         call.on('stream', (remoteStream) => {
+            if (this.isLeaving || !this.peer) return; // hangup済みなら何もしない(遅延streamでタイル/解析が復活するのを防ぐ)
             const label = this.usernames.get(call.peer) || call.peer;
             this.addVideoElement(call.peer, remoteStream, label);
             // 発話インジケーター: このリモートの受信ストリームに解析を接続
@@ -1419,8 +1421,36 @@ class ComChat {
         // Safari等ではユーザージェスチャ直後でもsuspendedで生成されることがある
         if (this.speakingAudioContext.state === 'suspended') {
             this.speakingAudioContext.resume().catch(() => {});
+            // iOSでアクティベーション失効によりresumeできない場合、次のユーザー操作で再試行する
+            this.registerSpeakingResumeRetry();
         }
         return this.speakingAudioContext;
+    }
+
+    // suspendedのままのAudioContextを、ユーザー操作(pointerdown)を契機にresumeし直す。
+    // 成功(running)またはteardownで解除。多重登録はしない。
+    registerSpeakingResumeRetry() {
+        if (this._speakingResumeHandler) return;
+        this._speakingResumeHandler = () => {
+            const ctx = this.speakingAudioContext;
+            if (!ctx || ctx.state === 'closed') {
+                this.unregisterSpeakingResumeRetry();
+                return;
+            }
+            if (ctx.state === 'suspended') {
+                ctx.resume().then(() => this.unregisterSpeakingResumeRetry()).catch(() => {});
+            } else {
+                this.unregisterSpeakingResumeRetry();
+            }
+        };
+        this._speakingResumeEvent = window.PointerEvent ? 'pointerdown' : 'touchend';
+        document.addEventListener(this._speakingResumeEvent, this._speakingResumeHandler);
+    }
+
+    unregisterSpeakingResumeRetry() {
+        if (!this._speakingResumeHandler) return;
+        document.removeEventListener(this._speakingResumeEvent, this._speakingResumeHandler);
+        this._speakingResumeHandler = null;
     }
 
     // 指定IDのMediaStreamにAnalyserNodeを接続する。
@@ -1538,6 +1568,7 @@ class ComChat {
 
     teardownSpeakingDetection() {
         this.stopSpeakingLoop();
+        this.unregisterSpeakingResumeRetry();
         this.speakingAnalysers.forEach((entry, id) => {
             try { entry.source.disconnect(); } catch {}
             try { entry.analyser.disconnect(); } catch {}

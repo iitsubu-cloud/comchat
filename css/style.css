@@ -829,30 +829,6 @@ body {
     transform: perspective(200px) rotateY(-65deg);
 }
 
-/* Status */
-.status {
-    text-align: center;
-    padding: 10px;
-    margin: 10px 0;
-    border-radius: 8px;
-    font-weight: 500;
-}
-
-.status.connecting {
-    background: #fff3cd;
-    color: #856404;
-}
-
-.status.connected {
-    background: #d4edda;
-    color: #155724;
-}
-
-.status.error {
-    background: #f8d7da;
-    color: #721c24;
-}
-
 /* Hidden class */
 .hidden {
     display: none !important;
@@ -1239,7 +1215,9 @@ body {
        Safari 15.4未満・Chrome 105未満で丸ごと無視され通話画面レイアウトが
        崩れるため、全ブラウザで確実なクラス切替に変更した。 */
     .container.in-call {
+        height: 100vh;
         height: 100svh;
+        min-height: 100vh;
         min-height: 100svh;
         overflow: hidden;
     }
@@ -1288,6 +1266,7 @@ body {
         right: 0;
         bottom: 0;
         width: 100%;
+        height: 72vh;
         height: 72svh;
         flex: none;
         min-height: 0;
