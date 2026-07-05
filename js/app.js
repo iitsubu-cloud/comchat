@@ -637,6 +637,13 @@ class ComChat {
     }
 
     handleConnection(conn) {
+        // 定員判定の前に、確実に死んでいる接続を掃除する(クラッシュ・タブ閉じ等で
+        // 明示退室が届かず、ICE切断イベントも発火しない端末で残るゴースト対策)。
+        // connectionStateが取れない環境や接続確立中('connecting')のピアには触れない
+        this.connections.forEach((c, id) => {
+            const st = c.peerConnection?.connectionState;
+            if (st === 'failed' || st === 'closed') this.cleanupPeer(id);
+        });
         // Enforce 6-person limit (5 remotes + self)
         if (this.connections.size >= 5) {
             // Notify the joiner that the room is full before closing, so they
@@ -809,6 +816,10 @@ class ComChat {
                     this.showStatus('ホストが退出したためルームは終了しました', 'error');
                 }
                 break;
+            case 'peer-leaving':
+                // 明示退室の通知。senderId本人のクリーンアップしかしないため詐称の危険はない
+                this.cleanupPeer(senderId);
+                break;
             case 'chat':
                 this.displayChatMessage(data.username, data.message);
                 break;
@@ -904,6 +915,34 @@ class ComChat {
                 break;
             }
         }
+    }
+
+    // 指定ピアのセッション状態を即座に片付ける(明示退室'peer-leaving'受信時と、
+    // 定員判定前のゴースト掃除で使用)。conn/callのcloseで後から届く遅延close/error
+    // イベントは、Mapから消えていること(callはidentityガード)により実質no-opになる
+    cleanupPeer(peerId) {
+        const conn = this.connections.get(peerId);
+        if (conn) { try { conn.close(); } catch (e) {} }
+        const call = this.calls.get(peerId);
+        if (call) { try { call.close(); } catch (e) {} }
+        this.connections.delete(peerId);
+        this.calls.delete(peerId);
+        this.usernames.delete(peerId);
+        this.muteStates.delete(peerId);
+        this.cameraStates.delete(peerId);
+        this.handStates.delete(peerId);
+        this.removeVideoElement(peerId);
+        if (this.currentRemoteSharerId === peerId) {
+            this.exitRemotePresenterMode();
+        }
+        for (const [id, transfer] of this.receivingFiles.entries()) {
+            if (transfer.senderId === peerId) {
+                transfer.progress.statusEl.textContent = '転送中断';
+                transfer.progress.barInner.style.background = '#dc3545';
+                this.receivingFiles.delete(id);
+            }
+        }
+        if (this.peer) this.updateRoomInfo();
     }
 
     updateRoomInfo() {
@@ -1491,7 +1530,27 @@ class ComChat {
             this.shareViewerLabel.classList.add('hidden');
             this.relayoutVideoGrid();
         };
-        if (v.webkitDisplayingFullscreen && v.webkitExitFullscreen) {
+        if (v.webkitPresentationMode === 'picture-in-picture' && v.webkitSetPresentationMode) {
+            // iOSのPiP(ネイティブ全画面中にホームへスワイプ等で自動移行)中は
+            // webkitDisplayingFullscreenがfalseになり下の全画面分岐を素通りするため、
+            // 即時片付けでPiPプレイヤーの残骸がホーム画面に取り残されていた(実機確認)。
+            // PiP終了完了(presentationmodechangedでinline)を待ってから片付ける
+            let done = false;
+            const onModeChange = () => {
+                if (done || v.webkitPresentationMode !== 'inline') return;
+                done = true;
+                v.removeEventListener('webkitpresentationmodechanged', onModeChange);
+                finish();
+            };
+            v.addEventListener('webkitpresentationmodechanged', onModeChange);
+            try { v.webkitSetPresentationMode('inline'); } catch (e) {}
+            setTimeout(() => {
+                if (done) return;
+                done = true;
+                v.removeEventListener('webkitpresentationmodechanged', onModeChange);
+                finish();
+            }, 2000); // 保険: イベントが来なくても最終的に片付ける
+        } else if (v.webkitDisplayingFullscreen && v.webkitExitFullscreen) {
             // iPhoneのネイティブ全画面中にsrcObject=nullやdisplay:noneを即時に行うと、
             // 非同期の全画面終了処理が中断されて真っ黒なプレイヤーがiOSに取り残される
             // (Safari終了後もシステム層に残骸が残り、デコーダを掴んだままになるため
@@ -1587,6 +1646,10 @@ class ComChat {
         // iPhoneのネイティブ全画面(webkitEnterFullscreen)中ならこちらで閉じる
         const v = this.screenShareVideo;
         if (v.webkitDisplayingFullscreen && v.webkitExitFullscreen) v.webkitExitFullscreen();
+        // iOSのPiP中なら通常表示へ戻す(共有者側はiPhone非対応のため主に保険)
+        if (v.webkitPresentationMode === 'picture-in-picture' && v.webkitSetPresentationMode) {
+            try { v.webkitSetPresentationMode('inline'); } catch (e) {}
+        }
     }
 
     buildMixedAudioTrack(screenStream) {
@@ -2781,6 +2844,10 @@ class ComChat {
         // タブ閉じ・クラッシュ時は従来どおり切断検知がフォールバックとして働く。
         // (下のconn.close()はSCTP仕様で送信バッファをflushしてから閉じるため配送される)
         if (this.isHost) this.broadcast({ type: 'room-closed' });
+        // ゲストの退室も明示通知する。ICE切断検知はiPhoneで数十秒遅れ・旧Safariでは
+        // 発火しないため、無通知だとホストのconnectionsにゴーストが蓄積し、実人数が
+        // 少ないのに「ルームは満員です」で再入室拒否される(実機で確認された)
+        else this.broadcast({ type: 'peer-leaving' });
         if (this.currentScreenStream) this.stopScreenShare();
         // 他人の共有を見ている最中に退室すると、下でcurrentRemoteSharerIdを先にnullにするため
         // conn closeハンドラ側のガードが効かずexitRemotePresenterModeが呼ばれず、

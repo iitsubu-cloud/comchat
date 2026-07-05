@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Klee+One:wght@400;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/style.css?v=47">
+    <link rel="stylesheet" href="css/style.css?v=48">
     <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>">
 </head>
 <body>
@@ -53,7 +53,10 @@
                     <div class="call-main">
                         <!-- Screen Share (presenter mode) -->
                         <div id="screen-share-container" class="hidden">
-                            <video id="screen-share-video" autoplay playsinline></video>
+                            <!-- disablepictureinpicture: iPhoneのネイティブ全画面からホームスワイプ等で自動PiP化すると
+                                 プレイヤー残骸がiOSに残る不具合の入口を塞ぐ(非対応Safariでは無視され、
+                                 その場合はexitRemotePresenterModeのPiP分岐が出口で対処する) -->
+                            <video id="screen-share-video" autoplay playsinline disablepictureinpicture></video>
                             <div id="screen-share-placeholder" class="screen-share-placeholder hidden">
                                 🖥️<br>画面を共有中
                             </div>
@@ -309,13 +312,19 @@
 
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
-    <script src="js/app.js?v=103"></script>
+    <script src="js/app.js?v=104"></script>
 
     <script>
         // タブを閉じる/ページ遷移時にリソースだけ解放（UI操作は不要）
         window.addEventListener('beforeunload', () => {
             if (!window.comChat) return;
             const cc = window.comChat;
+            // タブ閉じでも退室を明示通知する(ベストエフォート。ICE切断イベントが
+            // 発火しない端末でゴースト接続が残り満員誤判定になるのを防ぐ)
+            try {
+                const msg = cc.isHost ? { type: 'room-closed' } : { type: 'peer-leaving' };
+                cc.connections.forEach((c) => { try { if (c.open) c.send(msg); } catch (e) {} });
+            } catch (e) {}
             cc.stopBgFilterLoop();
             if (cc.bgFilterStream) cc.bgFilterStream.getTracks().forEach(t => t.stop());
             if (cc.currentScreenStream) cc.currentScreenStream.getTracks().forEach(t => t.stop());
@@ -517,10 +526,10 @@
                 padding: 8px 6px;
             }
             
-            .controls {
-                gap: 10px;
-            }
-            
+            /* .controls の gap はstyle.css側(≤768px:4px/≤480px:2px)で管理する。
+               ここで上書きするとボタン7個が375pxで折り返す(インラインstyleは
+               外部CSSより後に読まれるため同一詳細度では常に勝ってしまう) */
+
             .control-btn {
                 width: 46px;
                 height: 46px;

@@ -1431,9 +1431,12 @@ body {
         justify-content: space-around;
         margin: 6px 0;
         flex: 0 0 auto;
+        /* ボタン7個がiPhone縦(375px)で折り返さないよう最小間隔を詰める
+           (space-aroundが余白を配分するので広い画面での見た目は変わらない) */
+        gap: 4px;
     }
 
-    /* 6ボタンが狭い画面でも収まるよう縮小 */
+    /* 7ボタンが狭い画面でも収まるよう縮小 */
     .control-btn {
         width: 46px;
         height: 46px;
@@ -1503,6 +1506,17 @@ body {
     }
 }
 
+/* 狭いスマホ(iPhone SE3縦=375px等)でコントロール7個を1行に収める。
+   ctrl-itemの幅はラベル文字幅で決まるため「リアクション」(最長)を基準に圧縮 */
+@media (max-width: 480px) {
+    .controls {
+        gap: 2px;
+    }
+    .ctrl-label {
+        font-size: 0.62em;
+    }
+}
+
 /* 非常に小さい画面（320px等）でボタンが溢れないよう余白を縮小 */
 @media (max-width: 360px) {
     .hero-form .btn {
@@ -1511,5 +1525,18 @@ body {
     }
     .hero-form .btn-group {
         gap: 10px;
+    }
+    /* セレクタを.controls付きにして詳細度を上げる(index.htmlのインライン<style>の
+       .control-btn 46px指定より後勝ちにならないため、詳細度で確実に勝たせる) */
+    .controls {
+        gap: 0;
+    }
+    .controls .control-btn {
+        width: 40px;
+        height: 40px;
+        padding: 6px;
+    }
+    .controls .ctrl-label {
+        font-size: 0.56em;
     }
 }
