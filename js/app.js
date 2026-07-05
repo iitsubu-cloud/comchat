@@ -71,6 +71,12 @@ class ComChat {
         this._lastReactionSentAt = 0;
         this.REACTION_EMOJIS = ['👍', '👏', '😂', '🎉', '❤️', '😮'];
 
+        // コントロールバーの並べ替え(左利き対応・編集モード)
+        this.CONTROL_ORDER_STORAGE_KEY = 'comchat-control-order';
+        this.DEFAULT_CONTROL_ORDER = ['toggle-video', 'toggle-audio', 'share-screen', 'reaction-btn', 'toggle-chat', 'hangup', 'more-btn'];
+        this.isReorderMode = false;
+        this._reorderDrag = null; // ドラッグ中の状態(item, pointerId, 各種寸法)を保持
+
         this.initializeUI();
     }
 
@@ -267,6 +273,15 @@ class ComChat {
             e.stopPropagation();
         });
 
+        // ボタンの並べ替え(編集モード)
+        this.controlsEl = document.querySelector('.controls');
+        this.reorderBtn = document.getElementById('reorder-btn');
+        this.reorderToolbar = document.getElementById('reorder-toolbar');
+        this.reorderDoneBtn = document.getElementById('reorder-done-btn');
+        this.reorderResetBtn = document.getElementById('reorder-reset-btn');
+        this.applyStoredControlOrder();
+        this.setupReorderMode();
+
         this.reactionBtn = document.getElementById('reaction-btn');
         this.reactionPanel = document.getElementById('reaction-panel');
         this.handToggleBtn = document.getElementById('hand-toggle-btn');
@@ -357,6 +372,202 @@ class ComChat {
         if (pr.right > window.innerWidth - 8) shift = (window.innerWidth - 8) - pr.right;
         else if (pr.left < 8) shift = 8 - pr.left;
         if (shift) panel.style.left = (anchorRect.left + anchorRect.width / 2 + shift) + 'px';
+    }
+
+    // ==== コントロールバーの並べ替え(左利き対応・編集モード) ====
+
+    // 起動時: 保存済みの並び順があればDOM並べ替えで適用する。
+    // 堅牢なマージ: 保存配列から現存しないidを除去し、保存配列に無い現存ボタン
+    // (将来追加される新機能ボタン)はデフォルトの並び関係を保ちつつ位置を補う。
+    applyStoredControlOrder() {
+        const order = this.loadStoredControlOrder();
+        if (!order) return;
+        this.reorderControls(order);
+    }
+
+    loadStoredControlOrder() {
+        let saved;
+        try {
+            const raw = localStorage.getItem(this.CONTROL_ORDER_STORAGE_KEY);
+            if (!raw) return null;
+            saved = JSON.parse(raw);
+        } catch (e) {
+            return null;
+        }
+        if (!Array.isArray(saved)) return null;
+
+        const existingIds = Array.from(this.controlsEl.querySelectorAll(':scope > .ctrl-item > .control-btn')).map(b => b.id);
+        const existingSet = new Set(existingIds);
+        // 保存配列から現存しないid(過去に削除された機能等)を除去
+        const merged = saved.filter(id => existingSet.has(id));
+        const mergedSet = new Set(merged);
+        // 保存配列に無い現存ボタン(新機能等)をデフォルト順の相対位置を保って挿入
+        this.DEFAULT_CONTROL_ORDER.forEach(id => {
+            if (existingSet.has(id) && !mergedSet.has(id)) {
+                merged.push(id);
+                mergedSet.add(id);
+            }
+        });
+        // デフォルトにも保存にも無い未知のid(念のため)は末尾に残す
+        existingIds.forEach(id => {
+            if (!mergedSet.has(id)) { merged.push(id); mergedSet.add(id); }
+        });
+        return merged;
+    }
+
+    // idの配列順に.ctrl-itemをDOM並べ替えする
+    reorderControls(idOrder) {
+        idOrder.forEach(id => {
+            const btn = document.getElementById(id);
+            const item = btn && btn.closest('.ctrl-item');
+            if (item) this.controlsEl.appendChild(item);
+        });
+    }
+
+    setupReorderMode() {
+        if (this.reorderBtn) {
+            this.reorderBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.moreMenu.classList.add('hidden');
+                this.enterReorderMode();
+            });
+        }
+        if (this.reorderDoneBtn) {
+            this.reorderDoneBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.exitReorderMode(true);
+            });
+        }
+        if (this.reorderResetBtn) {
+            this.reorderResetBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.reorderControls(this.DEFAULT_CONTROL_ORDER);
+                localStorage.removeItem(this.CONTROL_ORDER_STORAGE_KEY);
+                // 編集モードは継続(完了を押すまで並べ替えを続けられる)
+            });
+        }
+
+        // 編集モード中はボタン本来の動作を完全に抑止する。
+        // キャプチャ段階のclickリスナーなので、各ボタンのバブリング段階リスナーより
+        // 先に発火しstopPropagation+preventDefaultできる(誤って退室モーダル等が開くのを防ぐ)。
+        this.controlsEl.addEventListener('click', (e) => {
+            if (!this.isReorderMode) return;
+            e.stopPropagation();
+            e.preventDefault();
+        }, true);
+
+        // ドラッグ&ドロップ(Pointer Eventsで自前実装。HTML5 D&DはiOSタッチで動かないため使用しない)
+        this.controlsEl.addEventListener('pointerdown', (e) => this.onReorderPointerDown(e));
+        this.controlsEl.addEventListener('pointermove', (e) => this.onReorderPointerMove(e));
+        this.controlsEl.addEventListener('pointerup', (e) => this.onReorderPointerUp(e));
+        this.controlsEl.addEventListener('pointercancel', (e) => this.onReorderPointerUp(e));
+    }
+
+    enterReorderMode() {
+        if (this.isReorderMode) return;
+        this.isReorderMode = true;
+        // 編集モード中に開いているパネル類は全て閉じる
+        this.filterPanel.classList.add('hidden');
+        if (this.bgImagePanel) this.bgImagePanel.classList.add('hidden');
+        if (this.reactionPanel) this.reactionPanel.classList.add('hidden');
+        this.moreMenu.classList.add('hidden');
+        this.controlsEl.classList.add('reorder-mode');
+        this.reorderToolbar.classList.remove('hidden');
+    }
+
+    exitReorderMode(save) {
+        if (!this.isReorderMode) return;
+        this.isReorderMode = false;
+        this.cancelReorderDrag();
+        this.controlsEl.classList.remove('reorder-mode');
+        this.reorderToolbar.classList.add('hidden');
+        if (save) {
+            const order = Array.from(this.controlsEl.querySelectorAll(':scope > .ctrl-item > .control-btn')).map(b => b.id);
+            try {
+                localStorage.setItem(this.CONTROL_ORDER_STORAGE_KEY, JSON.stringify(order));
+            } catch (e) { /* ストレージ不可でも編集モードは正常終了させる */ }
+        }
+    }
+
+    onReorderPointerDown(e) {
+        if (!this.isReorderMode) return;
+        // 同時ドラッグは1つまで
+        if (this._reorderDrag) return;
+        const item = e.target.closest('.ctrl-item');
+        if (!item || item.parentElement !== this.controlsEl) return;
+        e.preventDefault();
+        // キャプチャはDOM移動しないコンテナ側に取る。ドラッグ中のitemはinsertBeforeで
+        // 移動する(=一旦removeされてから挿入される)ため、item自身に取るとエンジンに
+        // よってはその瞬間キャプチャが解除され、指がバー外に出るとpointermove/pointerupを
+        // 取りこぼしてドラッグ状態が固着する(リスナーはcontrolsEl側なので受信にも支障なし)
+        try {
+            if (this.controlsEl.setPointerCapture) this.controlsEl.setPointerCapture(e.pointerId);
+        } catch (err) { /* 非対応環境でもバー内の追跡は動く */ }
+        item.classList.add('reorder-dragging');
+        this._reorderDrag = {
+            item,
+            pointerId: e.pointerId,
+            startX: e.clientX,
+            startY: e.clientY,
+        };
+    }
+
+    onReorderPointerMove(e) {
+        const drag = this._reorderDrag;
+        if (!drag || e.pointerId !== drag.pointerId) return;
+        e.preventDefault();
+        const dx = e.clientX - drag.startX;
+        const dy = e.clientY - drag.startY;
+        drag.item.style.transform = `translate(${dx}px, ${dy}px) scale(1.12)`;
+
+        // 水平位置が他itemの中点を越えたらDOMを並べ替える(正しさ優先の即時reorder。
+        // FLIPアニメーションは行わず、insertBeforeによる即時reorderのみ)
+        const siblings = Array.from(this.controlsEl.querySelectorAll(':scope > .ctrl-item')).filter(el => el !== drag.item);
+        const pointerX = e.clientX;
+        for (const sib of siblings) {
+            const sr = sib.getBoundingClientRect();
+            const midX = sr.left + sr.width / 2;
+            const sibIsAfter = !!(drag.item.compareDocumentPosition(sib) & Node.DOCUMENT_POSITION_FOLLOWING);
+            if (sibIsAfter && pointerX > midX) {
+                // 対象は現在ドラッグitemより後方にあり、ポインタがその中点を越えた→対象の後ろへ移動
+                this._reorderDraggedItem(drag, sib.nextSibling, e);
+                break;
+            } else if (!sibIsAfter && pointerX < midX) {
+                // 対象は現在ドラッグitemより前方にあり、ポインタがその中点を越えた→対象の前へ移動
+                this._reorderDraggedItem(drag, sib, e);
+                break;
+            }
+        }
+    }
+
+    // ドラッグ中itemのDOM移動。insertBeforeで自分のレイアウト位置(スロット)が変わるため、
+    // そのままだとtranslateの基準がずれてボタンが指から1スロット分飛ぶ。移動前後の
+    // レイアウト差分でstartX/Yを補正し、見た目の位置を指の下に留める
+    _reorderDraggedItem(drag, refNode, e) {
+        const before = drag.item.getBoundingClientRect();
+        this.controlsEl.insertBefore(drag.item, refNode);
+        const after = drag.item.getBoundingClientRect();
+        drag.startX += after.left - before.left;
+        drag.startY += after.top - before.top;
+        drag.item.style.transform = `translate(${e.clientX - drag.startX}px, ${e.clientY - drag.startY}px) scale(1.12)`;
+    }
+
+    onReorderPointerUp(e) {
+        const drag = this._reorderDrag;
+        if (!drag || e.pointerId !== drag.pointerId) return;
+        this.cancelReorderDrag();
+    }
+
+    // ドラッグ状態の解消(pointerup/pointercancel/編集モード強制終了時に共通で呼ぶ)
+    cancelReorderDrag() {
+        const drag = this._reorderDrag;
+        if (!drag) return;
+        drag.item.classList.remove('reorder-dragging');
+        drag.item.style.transform = '';
+        try {
+            if (this.controlsEl.releasePointerCapture) this.controlsEl.releasePointerCapture(drag.pointerId);
+        } catch (e) {}
+        this._reorderDrag = null;
     }
 
     showJoinInput() {
@@ -2895,6 +3106,9 @@ class ComChat {
     hangup() {
         this.isLeaving = true;
         this.isReconnecting = false;
+        // 通話終了時に並べ替え編集モードが残っていれば強制終了(ツールバー非表示・揺れ解除・
+        // ドラッグ状態解消)。ウェルカム画面に編集UIが漏れないようにする。保存はしない。
+        this.exitReorderMode(false);
         // ホストの退室は即時に全員へ明示通知する(ルーム終了)。切断検知(ICE)だけだと
         // 旧Safariでcloseが発火しない/iPhoneで戻りが数十秒遅れることが実機で確認された。
         // タブ閉じ・クラッシュ時は従来どおり切断検知がフォールバックとして働く。

@@ -1034,6 +1034,85 @@ body {
     color: white;
 }
 
+/* ボタン並べ替え編集モード(iOSホーム画面風) */
+@keyframes ctrl-item-wiggle {
+    0%   { transform: rotate(-2deg); }
+    50%  { transform: rotate(2deg); }
+    100% { transform: rotate(-2deg); }
+}
+
+/* 全ボタンが同期して揺れると機械的に見えるため、nth-childで開始タイミングを微妙にずらす */
+.controls.reorder-mode .ctrl-item {
+    animation: ctrl-item-wiggle 0.26s ease-in-out infinite;
+    touch-action: none;
+}
+.controls.reorder-mode .ctrl-item:nth-child(2) { animation-delay: -0.05s; }
+.controls.reorder-mode .ctrl-item:nth-child(3) { animation-delay: -0.10s; }
+.controls.reorder-mode .ctrl-item:nth-child(4) { animation-delay: -0.15s; }
+.controls.reorder-mode .ctrl-item:nth-child(5) { animation-delay: -0.02s; }
+.controls.reorder-mode .ctrl-item:nth-child(6) { animation-delay: -0.08s; }
+.controls.reorder-mode .ctrl-item:nth-child(7) { animation-delay: -0.13s; }
+
+/* ドラッグ中のitem: 持ち上げ演出。揺れは止めてtransformをJS制御に譲る */
+.controls.reorder-mode .ctrl-item.reorder-dragging {
+    animation: none;
+    transform: scale(1.12);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+    border-radius: 14px;
+    z-index: 20;
+    position: relative;
+}
+
+/* 並べ替え編集モード中のツールバー(コントロールバー直上・固定) */
+.reorder-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin: 4px 0 0;
+    flex-wrap: nowrap;
+}
+
+.reorder-toolbar-hint {
+    font-size: 0.72em;
+    color: #777;
+    white-space: nowrap;
+    margin-right: 2px;
+}
+
+.reorder-toolbar-btn {
+    border: none;
+    border-radius: 16px;
+    padding: 6px 12px;
+    font-size: 0.8em;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.reorder-toolbar-btn:active {
+    transform: scale(0.95);
+}
+
+.reorder-toolbar-btn-primary {
+    background: #0891b2;
+    color: white;
+}
+
+.reorder-toolbar-btn-primary:hover {
+    background: #0d9488;
+}
+
+.reorder-toolbar-btn-secondary {
+    background: #f0f0f0;
+    color: #555;
+}
+
+.reorder-toolbar-btn-secondary:hover {
+    background: #e2e2e2;
+}
+
 /* リアクション/挙手パネル(背景フィルターパネルと同系デザイン) */
 .reaction-panel {
     position: fixed;
@@ -1641,5 +1720,21 @@ body {
     }
     .controls .ctrl-label {
         font-size: 0.56em;
+    }
+    /* 320px幅でも「完了」「初期配置に戻す」が1行に収まるようgapを詰める
+       (ボタン自体の縮小は後方の480px以下ブロックが同詳細度後勝ちで担う) */
+    .reorder-toolbar {
+        gap: 4px;
+    }
+}
+
+/* 480px以下では案内文を省略してボタン優先で1行に収める */
+@media (max-width: 480px) {
+    .reorder-toolbar-hint {
+        display: none;
+    }
+    .reorder-toolbar-btn {
+        padding: 5px 10px;
+        font-size: 0.76em;
     }
 }
