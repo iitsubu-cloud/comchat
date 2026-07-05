@@ -77,6 +77,7 @@ class ComChat {
     initializeUI() {
         this.welcomeScreen = document.getElementById('welcome-screen');
         this.callScreen = document.getElementById('call-screen');
+        this.reactionOverlay = document.getElementById('reaction-overlay');
         this.videoGrid = document.getElementById('video-grid');
         this.chatMessages = document.getElementById('chat-messages');
         this.chatInput = document.getElementById('chat-input');
@@ -201,20 +202,28 @@ class ComChat {
 
         this.bgFilterBtn = document.getElementById('bg-filter');
         this.filterPanel = document.getElementById('filter-panel');
+        this.moreBtn = document.getElementById('more-btn');
+        this.moreMenu = document.getElementById('more-menu');
+        // 背景フィルターパネルの位置は#more-btn(常時表示・安定した要素)基準で算出する。
+        // #bg-filterは「その他」メニューの中の行なので、メニューを閉じた後は非表示/移動しうるため
+        // 位置基準には使えない(タップ→メニューが閉じる→フィルターパネルが開く、という流れ)。
         this.bgFilterBtn.addEventListener('click', (e) => {
             e.stopPropagation();
+            this.moreMenu.classList.add('hidden');
             if (this.bgImagePanel) this.bgImagePanel.classList.add('hidden');
             const isHidden = this.filterPanel.classList.contains('hidden');
             if (!isHidden) { this.filterPanel.classList.add('hidden'); return; }
-            const rect = this.bgFilterBtn.getBoundingClientRect();
+            const rect = this.moreBtn.getBoundingClientRect();
             this.filterPanel.style.bottom = (window.innerHeight - rect.top + 10) + 'px';
             this.filterPanel.style.left = (rect.left + rect.width / 2) + 'px';
             this.filterPanel.classList.remove('hidden');
+            this.clampPanelToViewport(this.filterPanel, rect);
         });
         document.addEventListener('click', () => {
             this.filterPanel.classList.add('hidden');
             if (this.bgImagePanel) this.bgImagePanel.classList.add('hidden');
             if (this.reactionPanel) this.reactionPanel.classList.add('hidden');
+            if (this.moreMenu) this.moreMenu.classList.add('hidden');
         });
         this.filterPanel.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -240,6 +249,24 @@ class ComChat {
         });
         this.initBgImagePanel();
 
+        // 「その他」メニュー: フィルター等、頻度の低い機能をまとめる汎用リスト
+        this.moreBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.filterPanel.classList.add('hidden');
+            if (this.bgImagePanel) this.bgImagePanel.classList.add('hidden');
+            if (this.reactionPanel) this.reactionPanel.classList.add('hidden');
+            const isHidden = this.moreMenu.classList.contains('hidden');
+            if (!isHidden) { this.moreMenu.classList.add('hidden'); return; }
+            const rect = this.moreBtn.getBoundingClientRect();
+            this.moreMenu.style.bottom = (window.innerHeight - rect.top + 10) + 'px';
+            this.moreMenu.style.left = (rect.left + rect.width / 2) + 'px';
+            this.moreMenu.classList.remove('hidden');
+            this.clampPanelToViewport(this.moreMenu, rect);
+        });
+        this.moreMenu.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
+
         this.reactionBtn = document.getElementById('reaction-btn');
         this.reactionPanel = document.getElementById('reaction-panel');
         this.handToggleBtn = document.getElementById('hand-toggle-btn');
@@ -247,6 +274,7 @@ class ComChat {
             e.stopPropagation();
             this.filterPanel.classList.add('hidden');
             if (this.bgImagePanel) this.bgImagePanel.classList.add('hidden');
+            if (this.moreMenu) this.moreMenu.classList.add('hidden');
             const isHidden = this.reactionPanel.classList.contains('hidden');
             if (!isHidden) { this.reactionPanel.classList.add('hidden'); return; }
             const rect = this.reactionBtn.getBoundingClientRect();
@@ -255,11 +283,7 @@ class ComChat {
             this.reactionPanel.classList.remove('hidden');
             // 小画面(iPhone等)でボタンが画面端に近いと中央揃えのパネルがはみ出すため、
             // 表示後に実寸を測って画面内(左右8pxマージン)へ寄せる
-            const pr = this.reactionPanel.getBoundingClientRect();
-            let shift = 0;
-            if (pr.right > window.innerWidth - 8) shift = (window.innerWidth - 8) - pr.right;
-            else if (pr.left < 8) shift = 8 - pr.left;
-            if (shift) this.reactionPanel.style.left = (rect.left + rect.width / 2 + shift) + 'px';
+            this.clampPanelToViewport(this.reactionPanel, rect);
         });
         this.reactionPanel.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -322,6 +346,17 @@ class ComChat {
             if (this._precallPressTarget !== undefined && this._precallPressTarget !== this.precallDialog) return;
             this.cancelPreCall();
         });
+    }
+
+    // 小画面(iPhone等)でトリガーボタンが画面端に近いと中央揃えのパネル(left:transform(-50%))が
+    // はみ出すため、表示後に実寸を測って画面内(左右8pxマージン)へ寄せる。
+    // reaction-panelで実装していたクランプ処理をfilter-panel/more-menuでも使えるよう共通化した。
+    clampPanelToViewport(panel, anchorRect) {
+        const pr = panel.getBoundingClientRect();
+        let shift = 0;
+        if (pr.right > window.innerWidth - 8) shift = (window.innerWidth - 8) - pr.right;
+        else if (pr.left < 8) shift = 8 - pr.left;
+        if (shift) panel.style.left = (anchorRect.left + anchorRect.width / 2 + shift) + 'px';
     }
 
     showJoinInput() {
@@ -846,7 +881,8 @@ class ComChat {
             case 'reaction':
                 // 任意文字列を画面に流させないため許可リストの絵文字のみ表示する
                 if (this.REACTION_EMOJIS.includes(data.emoji)) {
-                    this.showReactionOnTile(senderId, data.emoji);
+                    const name = this.usernames.get(senderId) || 'ユーザー';
+                    this.showReactionOverlay(name, data.emoji);
                 }
                 break;
             case 'hand-state': {
@@ -1370,42 +1406,58 @@ class ComChat {
         if (indicator) indicator.classList.toggle('hidden', !raised);
     }
 
-    // 連打対策で200msスロットル。broadcastは自分に届かないため自タイルには即表示する。
+    // 連打対策で200msスロットル。broadcastは自分に届かないため自分の名前でローカルエコーする。
     sendReaction(emoji) {
         const now = Date.now();
         if (now - this._lastReactionSentAt < 200) return;
         this._lastReactionSentAt = now;
         this.broadcast({ type: 'reaction', emoji });
-        this.showReactionOnTile('local', emoji);
+        this.showReactionOverlay(this.username, emoji);
     }
 
-    // タイル内に絵文字を浮上表示させ、アニメーション終了(またはその保険のタイムアウト)で
-    // 必ず1回だけ除去する。二重削除を避けるためremoveは冪等。
-    showReactionOnTile(id, emoji) {
-        const container = document.getElementById(`video-${id}`);
-        if (!container) return;
+    // 画面全体のオーバーレイに絵文字+送信者名を浮上表示させ、アニメーション終了
+    // (またはその保険のタイムアウト)で必ず1回だけ除去する。二重削除を避けるためremoveは冪等。
+    // プレゼンターモードのタイル(overflow:hiddenでクリップされる)に依存しないよう、
+    // #reaction-overlay(fixed, 画面全体)に描画する。
+    showReactionOverlay(name, emoji) {
+        if (!this.reactionOverlay) return;
 
-        // 同時表示は最大8個まで。超えたら最古のものを即座に削除する。
-        const existing = container.querySelectorAll('.reaction-float');
-        if (existing.length >= 8) existing[0].remove();
+        // 同時表示は最大12個まで。超えたら最古のものを即座に削除する。
+        const existing = this.reactionOverlay.querySelectorAll('.reaction-overlay-item');
+        if (existing.length >= 12) existing[0].remove();
 
-        const span = document.createElement('span');
-        span.className = 'reaction-float';
-        span.textContent = emoji;
-        // 連打時に重ならないよう水平位置を少しランダムにずらす
-        const offset = (Math.random() * 60 - 30).toFixed(1);
-        span.style.left = `calc(50% + ${offset}px)`;
+        const item = document.createElement('div');
+        item.className = 'reaction-overlay-item';
+
+        const emojiSpan = document.createElement('span');
+        emojiSpan.className = 'reaction-overlay-emoji';
+        emojiSpan.textContent = emoji;
+
+        const nameTag = document.createElement('span');
+        nameTag.className = 'reaction-overlay-name';
+        // XSS対策: 送信者名は必ずtextContentで挿入する(innerHTMLは使わない)
+        nameTag.textContent = name;
+
+        item.appendChild(emojiSpan);
+        item.appendChild(nameTag);
+
+        // 連打時に重ならないよう、水平方向の開始位置を画面幅15%〜85%の範囲でランダム化する
+        const startPct = 15 + Math.random() * 70;
+        item.style.left = startPct + '%';
+        // 横揺れ(±20〜30px)もランダム化して同時表示時の見た目の単調さを避ける
+        const sway = (20 + Math.random() * 10).toFixed(1);
+        item.style.setProperty('--sway', sway + 'px');
 
         let removed = false;
         const remove = () => {
             if (removed) return;
             removed = true;
-            span.remove();
+            item.remove();
         };
-        span.addEventListener('animationend', remove);
-        setTimeout(remove, 2200); // 保険: animationendが発火しない場合の二重削除ガード
+        item.addEventListener('animationend', remove);
+        setTimeout(remove, 3300); // 保険: animationendが発火しない場合の二重削除ガード(アニメ2.8s+0.5s)
 
-        container.appendChild(span);
+        this.reactionOverlay.appendChild(item);
     }
 
     toggleHand() {
@@ -2023,12 +2075,16 @@ class ComChat {
     }
 
     showBgImagePanel() {
+        // 通話中の位置基準は#more-btn(常時表示)。#bg-filterは「その他」メニュー内の行で、
+        // メニューが閉じた後は非表示(rectが全て0)になるため位置基準に使えない
         const refBtn = (this.precallDialog && !this.precallDialog.classList.contains('hidden'))
-            ? this.precallFilterBtn : this.bgFilterBtn;
+            ? this.precallFilterBtn : this.moreBtn;
         const rect = refBtn.getBoundingClientRect();
         this.bgImagePanel.style.bottom = (window.innerHeight - rect.top + 10) + 'px';
         this.bgImagePanel.style.left = (rect.left + rect.width / 2) + 'px';
         this.bgImagePanel.classList.remove('hidden');
+        // #more-btnは画面右端のため、小画面では中央揃えパネルが右にはみ出す→画面内へ寄せる
+        this.clampPanelToViewport(this.bgImagePanel, rect);
     }
 
     _presetUrl(name) {

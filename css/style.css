@@ -972,6 +972,68 @@ body {
     color: white;
 }
 
+/* 「その他」メニュー(背景フィルターパネルと同系デザイン)。
+   現状は1行(背景フィルター)のみだが、今後 録音/ホワイトボード/ルームロック等を
+   .more-menu-item の追加だけで拡張できるよう汎用的な縦リストにしている。 */
+.more-menu {
+    position: fixed;
+    background: white;
+    border-radius: 12px;
+    padding: 6px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    z-index: 10100;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 180px;
+    transform: translateX(-50%);
+}
+
+.more-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 44px;
+    padding: 8px 12px;
+    border: none;
+    background: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.88em;
+    font-weight: 500;
+    color: #444;
+    text-align: left;
+    width: 100%;
+    transition: background 0.15s;
+}
+
+.more-menu-item:hover {
+    background: #e6fbfa;
+    color: #0891b2;
+}
+
+/* JSが#bg-filterへ付け外しする.active(フィルターON中)の表示。
+   旧.control-btn.filter.activeは.more-menu-itemには効かないためここで定義する */
+.more-menu-item.active {
+    background: #0f766e;
+    color: white;
+}
+
+.more-menu-item svg {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+}
+
+.more-menu-item-label {
+    white-space: nowrap;
+}
+
+.control-btn.more {
+    background: #6b7280;
+    color: white;
+}
+
 /* リアクション/挙手パネル(背景フィルターパネルと同系デザイン) */
 .reaction-panel {
     position: fixed;
@@ -1050,30 +1112,71 @@ body {
     color: white;
 }
 
-/* 浮上して消えるリアクション絵文字。.video-containerはoverflow:hiddenのため
-   タイル外へはみ出さずクリップされる(仕様どおり) */
-.reaction-float {
-    position: absolute;
-    bottom: 15%;
-    left: 50%;
-    font-size: 2em;
-    line-height: 1;
+/* リアクション全画面オーバーレイ。コントロールバー(通常フロー、z-index無指定)より上、
+   トースト(9999)/モーダル(10000)/フィルター・リアクション等のパネル(10100)より下に置く。
+   z-index一覧(参考): 映像タイル内部 5〜10、チャットのボトムシート(モバイル) 60、
+   トースト 9999、precall/hangupモーダル 10000、filter/reaction/bg-imageパネル 10100。
+   60(チャット)より上、9999(トースト)より下の9000を採用し、通知や確認ダイアログを
+   リアクションが決して覆わないようにする。 */
+#reaction-overlay {
+    position: fixed;
+    inset: 0;
     pointer-events: none;
-    z-index: 7;
-    animation: reaction-rise 1.8s ease-out forwards;
+    overflow: hidden;
+    z-index: 9000;
 }
 
-@keyframes reaction-rise {
+/* 個々のリアクション: 絵文字+送信者名タグを縦に積んだコンテナ。
+   画面下部(コントロールバーの上、100〜120px)から画面上部まで上昇する。 */
+.reaction-overlay-item {
+    position: absolute;
+    bottom: 100px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    pointer-events: none;
+    animation: reaction-overlay-rise 2.8s ease-out forwards;
+}
+
+.reaction-overlay-emoji {
+    font-size: 44px;
+    line-height: 1;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.reaction-overlay-name {
+    font-size: 0.7em;
+    color: white;
+    background: rgba(0, 0, 0, 0.55);
+    padding: 2px 8px;
+    border-radius: 10px;
+    white-space: nowrap;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 横揺れ(--swayでランダム化)＋序盤のポップ(1.15x)＋終盤のフェードアウトで上昇する */
+@keyframes reaction-overlay-rise {
     0% {
         transform: translate(-50%, 0) scale(0.8);
         opacity: 1;
     }
-    20% {
-        transform: translate(-50%, -16px) scale(1.15);
+    15% {
+        transform: translate(calc(-50% + var(--sway, 24px)), -18vh) scale(1.15);
+        opacity: 1;
+    }
+    40% {
+        transform: translate(calc(-50% - var(--sway, 24px)), -42vh) scale(1);
+        opacity: 1;
+    }
+    70% {
+        transform: translate(calc(-50% + var(--sway, 24px)), -68vh) scale(1);
         opacity: 1;
     }
     100% {
-        transform: translate(-50%, -80px) scale(1);
+        transform: translate(-50%, -92vh) scale(1);
         opacity: 0;
     }
 }

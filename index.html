@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Klee+One:wght@400;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/style.css?v=48">
+    <link rel="stylesheet" href="css/style.css?v=49">
     <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>">
 </head>
 <body>
@@ -48,6 +48,8 @@
 
             <!-- Call Screen -->
             <div id="call-screen" class="hidden">
+                <!-- リアクション全画面オーバーレイ(fixed配置。DOM上の位置はどこでもよい) -->
+                <div id="reaction-overlay"></div>
                 <div class="call-layout">
                     <!-- Left: Video + Controls + Room Info -->
                     <div class="call-main">
@@ -114,18 +116,6 @@
                                 <span class="ctrl-label">画面共有</span>
                             </div>
                             <div class="ctrl-item">
-                                <button id="bg-filter" class="control-btn filter" title="背景フィルター">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                        <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/>
-                                        <line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/>
-                                        <line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/>
-                                        <line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/>
-                                        <line x1="17" y1="16" x2="23" y2="16"/>
-                                    </svg>
-                                </button>
-                                <span class="ctrl-label">フィルター</span>
-                            </div>
-                            <div class="ctrl-item">
                                 <button id="reaction-btn" class="control-btn reaction" title="リアクション">
                                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                         <circle cx="12" cy="12" r="10"/>
@@ -158,6 +148,16 @@
                                     </svg>
                                 </button>
                                 <span class="ctrl-label">退室</span>
+                            </div>
+                            <div class="ctrl-item">
+                                <button id="more-btn" class="control-btn more" title="その他">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/>
+                                        <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/>
+                                        <circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/>
+                                    </svg>
+                                </button>
+                                <span class="ctrl-label">その他</span>
                             </div>
                         </div>
 
@@ -253,6 +253,20 @@
         <div class="filter-option" data-filter="image">背景画像</div>
     </div>
 
+    <!-- 「その他」メニュー(今後、録音/ホワイトボード/ルームロック等の行を追加できる汎用リスト) -->
+    <div id="more-menu" class="more-menu hidden">
+        <button type="button" class="more-menu-item" id="bg-filter" title="背景フィルター">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/>
+                <line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/>
+                <line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/>
+                <line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/>
+                <line x1="17" y1="16" x2="23" y2="16"/>
+            </svg>
+            <span class="more-menu-item-label">背景フィルター</span>
+        </button>
+    </div>
+
     <!-- リアクション/挙手パネル -->
     <div id="reaction-panel" class="reaction-panel hidden">
         <div class="reaction-emoji-grid">
@@ -312,7 +326,7 @@
 
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
-    <script src="js/app.js?v=104"></script>
+    <script src="js/app.js?v=105"></script>
 
     <script>
         // タブを閉じる/ページ遷移時にリソースだけ解放（UI操作は不要）
