@@ -65,6 +65,11 @@ class ComChat {
         this.unreadCount = 0;
         this.isChatVisible = true;
         this.chatObserver = null;
+        // リアクション/挙手
+        this.handStates = new Map();
+        this.isHandRaised = false;
+        this._lastReactionSentAt = 0;
+        this.REACTION_EMOJIS = ['👍', '👏', '😂', '🎉', '❤️', '😮'];
 
         this.initializeUI();
     }
@@ -209,6 +214,7 @@ class ComChat {
         document.addEventListener('click', () => {
             this.filterPanel.classList.add('hidden');
             if (this.bgImagePanel) this.bgImagePanel.classList.add('hidden');
+            if (this.reactionPanel) this.reactionPanel.classList.add('hidden');
         });
         this.filterPanel.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -233,6 +239,40 @@ class ComChat {
             }
         });
         this.initBgImagePanel();
+
+        this.reactionBtn = document.getElementById('reaction-btn');
+        this.reactionPanel = document.getElementById('reaction-panel');
+        this.handToggleBtn = document.getElementById('hand-toggle-btn');
+        this.reactionBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.filterPanel.classList.add('hidden');
+            if (this.bgImagePanel) this.bgImagePanel.classList.add('hidden');
+            const isHidden = this.reactionPanel.classList.contains('hidden');
+            if (!isHidden) { this.reactionPanel.classList.add('hidden'); return; }
+            const rect = this.reactionBtn.getBoundingClientRect();
+            this.reactionPanel.style.bottom = (window.innerHeight - rect.top + 10) + 'px';
+            this.reactionPanel.style.left = (rect.left + rect.width / 2) + 'px';
+            this.reactionPanel.classList.remove('hidden');
+            // 小画面(iPhone等)でボタンが画面端に近いと中央揃えのパネルがはみ出すため、
+            // 表示後に実寸を測って画面内(左右8pxマージン)へ寄せる
+            const pr = this.reactionPanel.getBoundingClientRect();
+            let shift = 0;
+            if (pr.right > window.innerWidth - 8) shift = (window.innerWidth - 8) - pr.right;
+            else if (pr.left < 8) shift = 8 - pr.left;
+            if (shift) this.reactionPanel.style.left = (rect.left + rect.width / 2 + shift) + 'px';
+        });
+        this.reactionPanel.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const emojiBtn = e.target.closest('.reaction-emoji-btn');
+            if (emojiBtn) {
+                this.sendReaction(emojiBtn.dataset.emoji);
+                return;
+            }
+            if (e.target.closest('#hand-toggle-btn')) {
+                this.toggleHand();
+            }
+        });
+
         this.fileAttachBtn.addEventListener('click', () => {
             if (!this.isSendingFile) this.fileInput.click();
         });
@@ -331,6 +371,7 @@ class ComChat {
             this.usernames.clear();
             this.muteStates.clear();
             this.cameraStates.clear();
+            this.handStates.clear();
             this.isHost = false;
             this.roomId = null;
             this.createRoomBtn.disabled = false;
@@ -395,6 +436,7 @@ class ComChat {
             this.usernames.clear();
             this.muteStates.clear();
             this.cameraStates.clear();
+            this.handStates.clear();
             this.roomId = null;
             this.createRoomBtn.disabled = false;
             this.joinRoomBtn.disabled = false;
@@ -626,6 +668,7 @@ class ComChat {
             this.usernames.delete(conn.peer);
             this.muteStates.delete(conn.peer);
             this.cameraStates.delete(conn.peer);
+            this.handStates.delete(conn.peer);
             this.removeVideoElement(conn.peer);
             if (this.currentRemoteSharerId === conn.peer) {
                 this.exitRemotePresenterMode();
@@ -645,6 +688,7 @@ class ComChat {
             conn.send({ type: 'mute-state', muted: this.isAudioMuted });
             const cameraEnabled = this.localStream?.getVideoTracks()[0]?.enabled ?? true;
             conn.send({ type: 'camera-state', enabled: cameraEnabled });
+            conn.send({ type: 'hand-state', raised: this.isHandRaised });
             if (this.currentScreenStream) {
                 conn.send({ type: 'screen-share-start', peerId: this.peer.id, username: this.username });
             }
@@ -675,6 +719,7 @@ class ComChat {
             this.usernames.delete(conn.peer);
             this.muteStates.delete(conn.peer);
             this.cameraStates.delete(conn.peer);
+            this.handStates.delete(conn.peer);
             this.removeVideoElement(conn.peer);
             if (this.currentRemoteSharerId === conn.peer) {
                 this.exitRemotePresenterMode();
@@ -787,6 +832,21 @@ class ComChat {
                 this.muteStates.set(senderId, data.muted);
                 this.setMuteIndicator(senderId, data.muted);
                 break;
+            case 'reaction':
+                // 任意文字列を画面に流させないため許可リストの絵文字のみ表示する
+                if (this.REACTION_EMOJIS.includes(data.emoji)) {
+                    this.showReactionOnTile(senderId, data.emoji);
+                }
+                break;
+            case 'hand-state': {
+                this.handStates.set(senderId, data.raised);
+                this.setHandIndicator(senderId, data.raised);
+                if (data.raised) {
+                    const name = this.usernames.get(senderId) || 'ユーザー';
+                    this.showStatus(`${name}さんが挙手しました`, 'connected');
+                }
+                break;
+            }
             case 'camera-state': {
                 this.cameraStates.set(senderId, data.enabled);
                 const cn = document.querySelector(`#video-${senderId} .video-center-name`);
@@ -908,6 +968,12 @@ class ComChat {
         if (id === 'local' && this.isAudioMuted) muteIndicator.classList.remove('hidden');
         if (id !== 'local' && this.muteStates.get(id)) muteIndicator.classList.remove('hidden');
 
+        const handIndicator = document.createElement('div');
+        handIndicator.className = 'hand-indicator hidden';
+        handIndicator.textContent = '✋';
+        if (id === 'local' && this.isHandRaised) handIndicator.classList.remove('hidden');
+        if (id !== 'local' && this.handStates.get(id)) handIndicator.classList.remove('hidden');
+
         const centerName = document.createElement('div');
         centerName.className = 'video-center-name';
         centerName.textContent = label;
@@ -926,6 +992,7 @@ class ComChat {
         videoContainer.appendChild(video);
         videoContainer.appendChild(labelDiv);
         videoContainer.appendChild(muteIndicator);
+        videoContainer.appendChild(handIndicator);
         videoContainer.appendChild(centerName);
         this.videoGrid.appendChild(videoContainer);
         video.play().catch(() => {});
@@ -1257,6 +1324,62 @@ class ComChat {
     setMuteIndicator(id, isMuted) {
         const indicator = document.querySelector(`#video-${id} .mute-indicator`);
         if (indicator) indicator.classList.toggle('hidden', !isMuted);
+    }
+
+    setHandIndicator(id, raised) {
+        const indicator = document.querySelector(`#video-${id} .hand-indicator`);
+        if (indicator) indicator.classList.toggle('hidden', !raised);
+    }
+
+    // 連打対策で200msスロットル。broadcastは自分に届かないため自タイルには即表示する。
+    sendReaction(emoji) {
+        const now = Date.now();
+        if (now - this._lastReactionSentAt < 200) return;
+        this._lastReactionSentAt = now;
+        this.broadcast({ type: 'reaction', emoji });
+        this.showReactionOnTile('local', emoji);
+    }
+
+    // タイル内に絵文字を浮上表示させ、アニメーション終了(またはその保険のタイムアウト)で
+    // 必ず1回だけ除去する。二重削除を避けるためremoveは冪等。
+    showReactionOnTile(id, emoji) {
+        const container = document.getElementById(`video-${id}`);
+        if (!container) return;
+
+        // 同時表示は最大8個まで。超えたら最古のものを即座に削除する。
+        const existing = container.querySelectorAll('.reaction-float');
+        if (existing.length >= 8) existing[0].remove();
+
+        const span = document.createElement('span');
+        span.className = 'reaction-float';
+        span.textContent = emoji;
+        // 連打時に重ならないよう水平位置を少しランダムにずらす
+        const offset = (Math.random() * 60 - 30).toFixed(1);
+        span.style.left = `calc(50% + ${offset}px)`;
+
+        let removed = false;
+        const remove = () => {
+            if (removed) return;
+            removed = true;
+            span.remove();
+        };
+        span.addEventListener('animationend', remove);
+        setTimeout(remove, 2200); // 保険: animationendが発火しない場合の二重削除ガード
+
+        container.appendChild(span);
+    }
+
+    toggleHand() {
+        this.isHandRaised = !this.isHandRaised;
+        this.setHandIndicator('local', this.isHandRaised);
+        this.broadcast({ type: 'hand-state', raised: this.isHandRaised });
+        this.updateHandToggleBtn();
+    }
+
+    updateHandToggleBtn() {
+        if (!this.handToggleBtn) return;
+        this.handToggleBtn.textContent = this.isHandRaised ? '✋ 挙手をやめる' : '✋ 挙手';
+        this.handToggleBtn.classList.toggle('active', this.isHandRaised);
     }
 
     async shareScreen() {
@@ -2702,6 +2825,8 @@ class ComChat {
         this.isAudioMuted = false;
         this.muteStates.clear();
         this.cameraStates.clear();
+        this.handStates.clear();
+        this.isHandRaised = false;
         this.receivingFiles.clear();
         this.currentRemoteSharerId = null;
         this.currentScreenStream = null;
@@ -2713,6 +2838,7 @@ class ComChat {
         this.toggleAudioBtn.classList.remove('off');
         this.shareScreenBtn.classList.remove('active');
         this.bgFilterBtn.classList.remove('active');
+        this.updateHandToggleBtn();
         this.createRoomBtn.disabled = false;
         this.joinRoomBtn.disabled = false;
         this.confirmJoinBtn.disabled = false;

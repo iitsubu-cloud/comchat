@@ -972,6 +972,132 @@ body {
     color: white;
 }
 
+/* リアクション/挙手パネル(背景フィルターパネルと同系デザイン) */
+.reaction-panel {
+    position: fixed;
+    background: white;
+    border-radius: 12px;
+    padding: 10px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    z-index: 10100;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 200px;
+    transform: translateX(-50%);
+}
+
+.reaction-emoji-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+}
+
+.reaction-emoji-btn {
+    width: 48px;
+    height: 48px;
+    border: none;
+    border-radius: 10px;
+    background: #f4fbfb;
+    font-size: 1.5em;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.reaction-emoji-btn:hover {
+    background: #e6fbfa;
+    transform: scale(1.1);
+}
+
+.reaction-emoji-btn:active {
+    transform: scale(1.15);
+}
+
+.reaction-panel-divider {
+    height: 1px;
+    background: #e2e2e2;
+    margin: 2px 0;
+}
+
+.hand-toggle-btn {
+    border: none;
+    border-radius: 8px;
+    background: #f4fbfb;
+    color: #444;
+    padding: 10px 12px;
+    font-size: 0.92em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.hand-toggle-btn:hover {
+    background: #e6fbfa;
+    color: #0891b2;
+}
+
+.hand-toggle-btn.active {
+    background: #fbbf24;
+    color: #4a3200;
+}
+
+.control-btn.reaction {
+    background: #0891b2;
+    color: white;
+}
+
+/* 浮上して消えるリアクション絵文字。.video-containerはoverflow:hiddenのため
+   タイル外へはみ出さずクリップされる(仕様どおり) */
+.reaction-float {
+    position: absolute;
+    bottom: 15%;
+    left: 50%;
+    font-size: 2em;
+    line-height: 1;
+    pointer-events: none;
+    z-index: 7;
+    animation: reaction-rise 1.8s ease-out forwards;
+}
+
+@keyframes reaction-rise {
+    0% {
+        transform: translate(-50%, 0) scale(0.8);
+        opacity: 1;
+    }
+    20% {
+        transform: translate(-50%, -16px) scale(1.15);
+        opacity: 1;
+    }
+    100% {
+        transform: translate(-50%, -80px) scale(1);
+        opacity: 0;
+    }
+}
+
+/* 挙手インジケーター。ミュートインジケーター(右下)・ラベル(左下)と重ならないよう
+   反対の左上角に同系の丸バッジで配置する */
+.hand-indicator {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    width: 30px;
+    height: 30px;
+    background: rgba(251, 191, 36, 0.85);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1em;
+    line-height: 1;
+    pointer-events: none;
+    backdrop-filter: blur(2px);
+    z-index: 5;
+}
+
 .bg-image-panel {
     position: fixed;
     background: white;
