@@ -756,6 +756,14 @@ class ComChat {
                 this.hangup();
                 this.showStatus('ルームは満員です（最大6人）', 'error');
                 break;
+            case 'room-closed':
+                // ホストが退室ボタンで明示的にルームを終了した。なりすまし防止のため
+                // ホストID(=ルームID)からのメッセージのみ受理する
+                if (!this.isLeaving && !this.isHost && senderId === this.roomId) {
+                    this.hangup();
+                    this.showStatus('ホストが退出したためルームは終了しました', 'error');
+                }
+                break;
             case 'chat':
                 this.displayChatMessage(data.username, data.message);
                 break;
@@ -1347,15 +1355,38 @@ class ComChat {
     }
 
     exitRemotePresenterMode() {
-        this.exitScreenShareFullscreen();
         this.currentRemoteSharerId = null;
-        this.screenShareVideo.srcObject = null;
-        this.screenShareVideo.classList.add('hidden');
-        this.screenSharePlaceholder.classList.add('hidden');
-        this.screenShareContainer.classList.add('hidden');
-        this.callMain.classList.remove('presenter-mode');
-        this.shareViewerLabel.classList.add('hidden');
-        this.relayoutVideoGrid();
+        const v = this.screenShareVideo;
+        const finish = () => {
+            // 片付け待ちの間に新しい共有が始まっていたら、古い後始末で新しい表示を壊さない
+            if (this.currentRemoteSharerId) return;
+            v.srcObject = null;
+            v.classList.add('hidden');
+            this.screenSharePlaceholder.classList.add('hidden');
+            this.screenShareContainer.classList.add('hidden');
+            this.callMain.classList.remove('presenter-mode');
+            this.shareViewerLabel.classList.add('hidden');
+            this.relayoutVideoGrid();
+        };
+        if (v.webkitDisplayingFullscreen && v.webkitExitFullscreen) {
+            // iPhoneのネイティブ全画面中にsrcObject=nullやdisplay:noneを即時に行うと、
+            // 非同期の全画面終了処理が中断されて真っ黒なプレイヤーがiOSに取り残される
+            // (Safari終了後もシステム層に残骸が残り、デコーダを掴んだままになるため
+            // 再入室後の映像まで黒くなる)。webkitendfullscreen(終了完了)を待ってから片付ける
+            let done = false;
+            const onEnd = () => {
+                if (done) return;
+                done = true;
+                v.removeEventListener('webkitendfullscreen', onEnd);
+                finish();
+            };
+            v.addEventListener('webkitendfullscreen', onEnd);
+            try { v.webkitExitFullscreen(); } catch (e) {}
+            setTimeout(onEnd, 2000); // 保険: endfullscreenが来なくても最終的に片付ける
+        } else {
+            this.exitScreenShareFullscreen();
+            finish();
+        }
     }
 
     stopScreenShare() {
@@ -2622,6 +2653,11 @@ class ComChat {
     hangup() {
         this.isLeaving = true;
         this.isReconnecting = false;
+        // ホストの退室は即時に全員へ明示通知する(ルーム終了)。切断検知(ICE)だけだと
+        // 旧Safariでcloseが発火しない/iPhoneで戻りが数十秒遅れることが実機で確認された。
+        // タブ閉じ・クラッシュ時は従来どおり切断検知がフォールバックとして働く。
+        // (下のconn.close()はSCTP仕様で送信バッファをflushしてから閉じるため配送される)
+        if (this.isHost) this.broadcast({ type: 'room-closed' });
         if (this.currentScreenStream) this.stopScreenShare();
         // 他人の共有を見ている最中に退室すると、下でcurrentRemoteSharerIdを先にnullにするため
         // conn closeハンドラ側のガードが効かずexitRemotePresenterModeが呼ばれず、
