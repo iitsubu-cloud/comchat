@@ -1029,6 +1029,11 @@ body {
     white-space: nowrap;
 }
 
+/* ルームロックのアイコン切替(screen-fullscreen-btnと同じ二枚方式) */
+#room-lock-btn .lock-icon-locked { display: none; }
+#room-lock-btn.locked .lock-icon-unlocked { display: none; }
+#room-lock-btn.locked .lock-icon-locked { display: block; }
+
 .control-btn.more {
     background: #6b7280;
     color: white;

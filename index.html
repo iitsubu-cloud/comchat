@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Klee+One:wght@400;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/style.css?v=50">
+    <link rel="stylesheet" href="css/style.css?v=51">
     <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>">
 </head>
 <body>
@@ -170,7 +170,7 @@
 
                         <!-- Room Info -->
                         <div id="room-info" class="room-info hidden">
-                            <span>ルームID: <span id="room-id-display"></span><button id="copy-room-id" class="copy-btn" title="ルームIDをコピー"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="0" width="11" height="11" rx="2"/><rect x="0" y="5" width="11" height="11" rx="2"/></svg></button></span>
+                            <span>ルームID: <span id="room-id-display" title="タップして表示/非表示"></span><button id="copy-room-id" class="copy-btn" title="ルームIDをコピー"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="0" width="11" height="11" rx="2"/><rect x="0" y="5" width="11" height="11" rx="2"/></svg></button></span>
                             <span>参加者: <span id="participant-count">1</span>/6</span>
                             <span class="username-info">名前: <span id="username-current"></span> <button id="edit-username-btn" class="copy-btn edit-btn" title="名前を変更">✏️</button><input id="username-edit-input" class="username-edit-input hidden" type="text" maxlength="20"><button id="username-confirm-btn" class="copy-btn confirm-btn hidden">✓</button></span>
                         </div>
@@ -283,6 +283,17 @@
             </svg>
             <span class="more-menu-item-label">ボタンの並べ替え</span>
         </button>
+        <button type="button" class="more-menu-item hidden" id="room-lock-btn" title="ルームをロック">
+            <svg class="lock-icon-unlocked" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="4" y="11" width="16" height="10" rx="2"/>
+                <path d="M8 11V7a4 4 0 0 1 7.4-2.1"/>
+            </svg>
+            <svg class="lock-icon-locked" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="4" y="11" width="16" height="10" rx="2"/>
+                <path d="M8 11V7a4 4 0 0 1 8 0v4"/>
+            </svg>
+            <span class="more-menu-item-label" id="room-lock-label">ルームをロック</span>
+        </button>
     </div>
 
     <!-- リアクション/挙手パネル -->
@@ -344,7 +355,7 @@
 
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
-    <script src="js/app.js?v=106"></script>
+    <script src="js/app.js?v=107"></script>
 
     <script>
         // タブを閉じる/ページ遷移時にリソースだけ解放（UI操作は不要）
@@ -388,6 +399,12 @@
             gap: 14px;
             align-items: center;
             flex-wrap: wrap;
+        }
+
+        #room-id-display {
+            cursor: pointer;
+            letter-spacing: 1px;
+            user-select: none;
         }
 
         .username-edit-input {

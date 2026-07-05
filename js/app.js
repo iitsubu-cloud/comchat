@@ -9,6 +9,8 @@ class ComChat {
         this.usernames = new Map();
         this.roomId = null;
         this.isHost = false;
+        this.roomLocked = false;
+        this.roomIdRevealed = false;
         this.username = 'ユーザー';
         this.isAudioMuted = false;
         this.muteStates = new Map();
@@ -102,6 +104,11 @@ class ComChat {
         }, { threshold: 1.0 });
         this.statusDiv = document.getElementById('status'); // may be null if removed from HTML
         this.roomIdDisplay = document.getElementById('room-id-display');
+        // ルームIDは既定で伏字表示(画面共有/スクショでの流出防止)。タップで表示/非表示を切替
+        this.roomIdDisplay.addEventListener('click', () => {
+            this.roomIdRevealed = !this.roomIdRevealed;
+            this.renderRoomIdDisplay();
+        });
         this.participantCount = document.getElementById('participant-count');
         this.roomInfoDiv = document.getElementById('room-info');
         this.joinGroup = document.getElementById('join-group');
@@ -281,6 +288,15 @@ class ComChat {
         this.reorderResetBtn = document.getElementById('reorder-reset-btn');
         this.applyStoredControlOrder();
         this.setupReorderMode();
+
+        // ルームロック(ホスト限定)
+        this.roomLockBtn = document.getElementById('room-lock-btn');
+        this.roomLockLabel = document.getElementById('room-lock-label');
+        this.roomLockBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.moreMenu.classList.add('hidden');
+            this.toggleRoomLock();
+        });
 
         this.reactionBtn = document.getElementById('reaction-btn');
         this.reactionPanel = document.getElementById('reaction-panel');
@@ -890,6 +906,15 @@ class ComChat {
             const st = c.peerConnection?.connectionState;
             if (st === 'failed' || st === 'closed') this.cleanupPeer(id);
         });
+        // ルームロック中は新規参加をすべて拒否する(v1はシンプルに全拒否。既存メンバーの
+        // 再接続もここで一緒に拒否されるが、ロック中はそもそも想定しない運用として許容)
+        if (this.isHost && this.roomLocked) {
+            conn.on('open', () => {
+                try { conn.send({ type: 'room-locked' }); } catch {}
+                setTimeout(() => { try { conn.close(); } catch {} }, 150);
+            });
+            return;
+        }
         // Enforce 6-person limit (5 remotes + self)
         if (this.connections.size >= 5) {
             // Notify the joiner that the room is full before closing, so they
@@ -1054,6 +1079,10 @@ class ComChat {
                 this.hangup();
                 this.showStatus('ルームは満員です（最大6人）', 'error');
                 break;
+            case 'room-locked':
+                this.hangup();
+                this.showStatus('このルームはロックされています', 'error');
+                break;
             case 'room-closed':
                 // ホストが退室ボタンで明示的にルームを終了した。なりすまし防止のため
                 // ホストID(=ルームID)からのメッセージのみ受理する
@@ -1194,9 +1223,28 @@ class ComChat {
 
     updateRoomInfo() {
         this.roomInfoDiv.classList.remove('hidden');
-        this.roomIdDisplay.textContent = this.roomId;
+        this.renderRoomIdDisplay();
         this.participantCount.textContent = this.connections.size + 1;
         this.usernameCurrentDisplay.textContent = this.username;
+        // ルームロックはホストの門番なので、トグルはホスト限定で表示する
+        this.roomLockBtn.classList.toggle('hidden', !this.isHost);
+    }
+
+    // ルームIDは既定で伏字(●を実際の長さだけ並べる)。タップで表示/非表示をトグルする
+    renderRoomIdDisplay() {
+        if (!this.roomId) return;
+        this.roomIdDisplay.textContent = this.roomIdRevealed ? this.roomId : '●'.repeat(this.roomId.length);
+    }
+
+    // ホスト限定。ロック中は新規参加(handleConnection)を拒否する(既存メンバーは無影響)
+    toggleRoomLock() {
+        if (!this.isHost) return;
+        this.roomLocked = !this.roomLocked;
+        this.roomLockBtn.classList.toggle('locked', this.roomLocked);
+        this.roomLockBtn.classList.toggle('active', this.roomLocked);
+        this.roomLockBtn.title = this.roomLocked ? 'ルームのロックを解除' : 'ルームをロック';
+        this.roomLockLabel.textContent = this.roomLocked ? 'ロック中（タップで解除）' : 'ルームをロック';
+        this.showStatus(this.roomLocked ? 'ルームをロックしました（新規参加を拒否）' : 'ルームのロックを解除しました', 'connected');
     }
 
     startEditUsername() {
@@ -3159,6 +3207,8 @@ class ComChat {
 
         this.isHost = false;
         this.roomId = null;
+        this.roomLocked = false;
+        this.roomIdRevealed = false;
         this.isAudioMuted = false;
         this.muteStates.clear();
         this.cameraStates.clear();
@@ -3175,6 +3225,9 @@ class ComChat {
         this.toggleAudioBtn.classList.remove('off');
         this.shareScreenBtn.classList.remove('active');
         this.bgFilterBtn.classList.remove('active');
+        this.roomLockBtn.classList.remove('locked', 'active');
+        this.roomLockBtn.title = 'ルームをロック';
+        this.roomLockLabel.textContent = 'ルームをロック';
         this.updateHandToggleBtn();
         this.createRoomBtn.disabled = false;
         this.joinRoomBtn.disabled = false;
