@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Klee+One:wght@400;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/style.css?v=45">
+    <link rel="stylesheet" href="css/style.css?v=46">
     <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>">
 </head>
 <body>
@@ -59,6 +59,16 @@
                             </div>
                             <button id="stop-share-btn" class="stop-share-btn">⏹ 画面共有中（クリックで停止）</button>
                             <div id="share-viewer-label" class="share-viewer-label hidden"></div>
+                            <button id="screen-fullscreen-btn" class="screen-fullscreen-btn" title="全画面表示" aria-label="全画面表示">
+                                <svg class="fs-enter-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
+                                    <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+                                </svg>
+                                <svg class="fs-exit-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/>
+                                    <line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/>
+                                </svg>
+                            </button>
                         </div>
 
                         <!-- Video Grid -->
@@ -274,7 +284,7 @@
 
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
-    <script src="js/app.js?v=100"></script>
+    <script src="js/app.js?v=101"></script>
 
     <script>
         // タブを閉じる/ページ遷移時にリソースだけ解放（UI操作は不要）

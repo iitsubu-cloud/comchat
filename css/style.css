@@ -40,6 +40,23 @@ body {
     font-weight: bold;
 }
 
+/* 通話中はヘッダーを圧縮して映像領域を広げる(ヘッダーはグリッド外なので低リスク)。
+   in-callクラスはJS(showCallScreen/showWelcomeScreen)が付け外しする */
+.container.in-call .header {
+    padding: 3px 16px;
+}
+
+.container.in-call .logo {
+    font-size: 0.9em;
+}
+
+/* 縦が狭い画面(iPhone横向き・11インチMBA・iPad横向き等)では通話中ヘッダーを完全に隠す */
+@media (max-height: 700px) {
+    .container.in-call .header {
+        display: none;
+    }
+}
+
 /* Main content area */
 .main-content {
     flex: 1;
@@ -429,6 +446,50 @@ body {
     padding: 6px 14px;
     font-size: 0.85em;
 }
+
+/* 画面共有フルスクリーンボタン(右下)。左下のstop-share-btn/share-viewer-labelと重ならない。
+   videoが非表示(プレースホルダー表示中)のときは後続兄弟セレクタで丸ごと隠す */
+.screen-fullscreen-btn {
+    position: absolute;
+    bottom: 12px;
+    right: 12px;
+    z-index: 10;
+    width: 36px;
+    height: 36px;
+    padding: 8px;
+    background: rgba(0, 0, 0, 0.6);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+}
+
+.screen-fullscreen-btn:hover {
+    background: rgba(0, 0, 0, 0.85);
+}
+
+.screen-fullscreen-btn svg {
+    width: 100%;
+    height: 100%;
+}
+
+#screen-share-video.hidden ~ .screen-fullscreen-btn {
+    display: none;
+}
+
+/* アイコン切替: 通常時=拡大アイコン、全画面中(is-fullscreen)=縮小アイコン */
+.screen-fullscreen-btn .fs-exit-icon { display: none; }
+#screen-share-container.is-fullscreen .fs-enter-icon { display: none; }
+#screen-share-container.is-fullscreen .fs-exit-icon { display: block; }
+
+/* 全画面中は角丸を外す。:fullscreenと:-webkit-full-screenは未知の擬似クラスが
+   セレクタリスト全体を無効化するため、絶対にカンマで結合しないこと */
+#screen-share-container:fullscreen { border-radius: 0; }
+#screen-share-container:-webkit-full-screen { border-radius: 0; }
 
 .call-main.presenter-mode .video-grid {
     display: flex;

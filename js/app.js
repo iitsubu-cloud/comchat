@@ -108,6 +108,7 @@ class ComChat {
         this.shareScreenBtn = document.getElementById('share-screen');
         this.stopShareBtn = document.getElementById('stop-share-btn');
         this.shareViewerLabel = document.getElementById('share-viewer-label');
+        this.screenFullscreenBtn = document.getElementById('screen-fullscreen-btn');
         this.screenSharePlaceholder = document.getElementById('screen-share-placeholder');
 
         this.copyRoomIdBtn = document.getElementById('copy-room-id');
@@ -175,6 +176,17 @@ class ComChat {
         this.toggleAudioBtn.addEventListener('click', () => this.toggleAudio());
         this.shareScreenBtn.addEventListener('click', () => this.shareScreen());
         this.stopShareBtn.addEventListener('click', () => this.stopScreenShare());
+        this.screenFullscreenBtn.addEventListener('click', () => this.toggleScreenShareFullscreen());
+        // 全画面の開始/終了でボタンのアイコンとラベルを同期(Escキーや標準UIでの終了も拾う)
+        const onFsChange = () => {
+            const active = (document.fullscreenElement || document.webkitFullscreenElement) === this.screenShareContainer;
+            this.screenShareContainer.classList.toggle('is-fullscreen', active);
+            const label = active ? '全画面を終了' : '全画面表示';
+            this.screenFullscreenBtn.title = label;
+            this.screenFullscreenBtn.setAttribute('aria-label', label);
+        };
+        document.addEventListener('fullscreenchange', onFsChange);
+        document.addEventListener('webkitfullscreenchange', onFsChange);
         if (this.toggleChatBtn) this.toggleChatBtn.addEventListener('click', () => this.toggleChat());
         if (this.chatCloseBtn) this.chatCloseBtn.addEventListener('click', () => this.closeChat());
 
@@ -1335,6 +1347,7 @@ class ComChat {
     }
 
     exitRemotePresenterMode() {
+        this.exitScreenShareFullscreen();
         this.currentRemoteSharerId = null;
         this.screenShareVideo.srcObject = null;
         this.screenShareVideo.classList.add('hidden');
@@ -1347,6 +1360,7 @@ class ComChat {
 
     stopScreenShare() {
         if (!this.currentScreenStream) return;
+        this.exitScreenShareFullscreen();
 
         this.currentScreenStream.getTracks().forEach(t => t.stop());
 
@@ -1386,6 +1400,39 @@ class ComChat {
         this.shareScreenBtn.classList.remove('active');
         this.broadcast({ type: 'screen-share-stop' });
         this.cameraVideoTrack = null;
+    }
+
+    toggleScreenShareFullscreen() {
+        const container = this.screenShareContainer;
+        const video = this.screenShareVideo;
+        const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+        if (fsEl === container) {
+            if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+            else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+            return;
+        }
+        // ① 標準Fullscreen API(Mac/iPad/Windows) ② 旧Safari(2011 MBA等)のwebkit接頭辞
+        // ③ iPhone: 要素フルスクリーン非対応のためvideoのネイティブ全画面(自動で横回転も効く)
+        if (document.fullscreenEnabled && container.requestFullscreen) {
+            container.requestFullscreen().catch(() => {});
+        } else if (document.webkitFullscreenEnabled && container.webkitRequestFullscreen) {
+            container.webkitRequestFullscreen();
+        } else if (video.webkitEnterFullscreen) {
+            // 動画が未再生だとInvalidStateErrorを投げることがあるため握りつぶす
+            try { video.webkitEnterFullscreen(); } catch (e) {}
+        }
+    }
+
+    exitScreenShareFullscreen() {
+        // 共有終了・退室時に全画面のまま取り残さないための後始末
+        const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+        if (fsEl === this.screenShareContainer) {
+            if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+            else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+        }
+        // iPhoneのネイティブ全画面(webkitEnterFullscreen)中ならこちらで閉じる
+        const v = this.screenShareVideo;
+        if (v.webkitDisplayingFullscreen && v.webkitExitFullscreen) v.webkitExitFullscreen();
     }
 
     buildMixedAudioTrack(screenStream) {
@@ -2576,6 +2623,10 @@ class ComChat {
         this.isLeaving = true;
         this.isReconnecting = false;
         if (this.currentScreenStream) this.stopScreenShare();
+        // 他人の共有を見ている最中に退室すると、下でcurrentRemoteSharerIdを先にnullにするため
+        // conn closeハンドラ側のガードが効かずexitRemotePresenterModeが呼ばれず、
+        // screen-share-containerとpresenter-modeが残留して再入室時に固着する。ここで明示的に解除する
+        if (this.currentRemoteSharerId) this.exitRemotePresenterMode();
         this.teardownMixedAudio();
         // 発話インジケーター: ループ停止・全Analyser破棄・AudioContext close
         this.teardownSpeakingDetection();
