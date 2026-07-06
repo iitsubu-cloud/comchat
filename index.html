@@ -32,7 +32,7 @@
                 </div>
                 <div class="hero-form">
                     <div class="input-group">
-                        <input type="text" id="username" placeholder="ユーザー名を入力">
+                        <input type="text" id="username" placeholder="ユーザー名を入力" maxlength="20">
                     </div>
                     <div class="btn-group">
                         <button id="create-room" class="btn btn-primary">🏠 ルーム作成</button>
@@ -262,16 +262,6 @@
 
     <!-- 「その他」メニュー(今後、録音/ホワイトボード/ルームロック等の行を追加できる汎用リスト) -->
     <div id="more-menu" class="more-menu hidden">
-        <button type="button" class="more-menu-item" id="bg-filter" title="背景フィルター">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/>
-                <line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/>
-                <line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/>
-                <line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/>
-                <line x1="17" y1="16" x2="23" y2="16"/>
-            </svg>
-            <span class="more-menu-item-label">背景フィルター</span>
-        </button>
         <button type="button" class="more-menu-item" id="reorder-btn" title="ボタンの並べ替え">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <line x1="4" y1="6" x2="20" y2="6"/>
@@ -282,6 +272,16 @@
                 <circle cx="20" cy="18" r="1.6" fill="currentColor" stroke="none"/>
             </svg>
             <span class="more-menu-item-label">ボタンの並べ替え</span>
+        </button>
+        <button type="button" class="more-menu-item" id="bg-filter" title="背景フィルター">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/>
+                <line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/>
+                <line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/>
+                <line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/>
+                <line x1="17" y1="16" x2="23" y2="16"/>
+            </svg>
+            <span class="more-menu-item-label">背景フィルター</span>
         </button>
         <button type="button" class="more-menu-item hidden" id="room-lock-btn" title="ルームをロック">
             <svg class="lock-icon-unlocked" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -355,7 +355,7 @@
 
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
-    <script src="js/app.js?v=109"></script>
+    <script src="js/app.js?v=110"></script>
 
     <script>
         // タブを閉じる/ページ遷移時にリソースだけ解放（UI操作は不要）

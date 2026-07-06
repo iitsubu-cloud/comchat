@@ -16,6 +16,7 @@ class ComChat {
         this.muteStates = new Map();
         this.cameraStates = new Map();
         this.receivingFiles = new Map();
+        this._msgRate = new Map(); // 悪意あるピアからのメッセージ洪水対策(ピアごとのレート計測)
         this.isConnecting = false;
         this.bgFilterType = 'none';
         this.bgFilterCanvas = null;
@@ -1104,15 +1105,19 @@ class ComChat {
                 this.cleanupPeer(senderId);
                 break;
             case 'chat':
-                // 発言者名は自己申告(data.username)ではなく真正な名簿から解決する(なりすまし防止)
-                this.displayChatMessage(this.usernames.get(senderId) || 'ユーザー', data.message);
+                if (!this._allowMessage(senderId)) break; // 連投フラッディング対策
+                // 発言者名は自己申告(data.username)ではなく真正な名簿から解決する(なりすまし防止)。
+                // 巨大メッセージによるDOM肥大を防ぐため2000字で切り詰める。
+                this.displayChatMessage(this.usernames.get(senderId) || 'ユーザー', String(data.message ?? '').slice(0, 2000));
                 break;
             case 'user-join': {
-                this.usernames.set(senderId, data.username);
+                // 巨大ユーザー名によるDOM肥大対策で50字に切り詰める
+                const uname = String(data.username ?? 'ユーザー').slice(0, 50);
+                this.usernames.set(senderId, uname);
                 const labelDiv = document.querySelector(`#video-${senderId} .video-label`);
-                if (labelDiv) labelDiv.textContent = data.username;
+                if (labelDiv) labelDiv.textContent = uname;
                 const centerName = document.querySelector(`#video-${senderId} .video-center-name`);
-                if (centerName) centerName.textContent = data.username;
+                if (centerName) centerName.textContent = uname;
                 break;
             }
             case 'peer-list':
@@ -1130,6 +1135,7 @@ class ComChat {
                 this.setMuteIndicator(senderId, data.muted);
                 break;
             case 'reaction':
+                if (!this._allowMessage(senderId)) break; // 連打フラッディング対策
                 // 任意文字列を画面に流させないため許可リストの絵文字のみ表示する
                 if (this.REACTION_EMOJIS.includes(data.emoji)) {
                     const name = this.usernames.get(senderId) || 'ユーザー';
@@ -1164,6 +1170,13 @@ class ComChat {
                 if (senderId === this.currentRemoteSharerId) this.exitRemotePresenterMode();
                 break;
             case 'file-meta': {
+                // 悪意あるピアからの過大/不正なメタ情報を弾く(受信側メモリ膨張・フリーズ対策)。
+                // 上限3200 = ceil(200MB / 64KBチャンク)＝送信側sendFileの正規最大チャンク数。
+                if (typeof data.id !== 'string' ||
+                    !Number.isInteger(data.totalChunks) || data.totalChunks < 1 || data.totalChunks > 3200 ||
+                    typeof data.size !== 'number' || data.size < 0 || data.size > 200 * 1024 * 1024) {
+                    break;
+                }
                 const senderName = this.usernames.get(senderId) || senderId;
                 const progress = this.createFileProgress(senderName, data.name, '受信中');
                 this.receivingFiles.set(data.id, { meta: data, chunks: [], received: 0, progress, senderId });
@@ -1172,6 +1185,8 @@ class ComChat {
             case 'file-chunk':
                 if (this.receivingFiles.has(data.id)) {
                     const tf = this.receivingFiles.get(data.id);
+                    // indexの範囲外/非整数を弾く(疎配列肥大・進捗偽装対策)
+                    if (!Number.isInteger(data.index) || data.index < 0 || data.index >= tf.meta.totalChunks) break;
                     // Use === undefined (not falsy): an empty 0-byte chunk is '' and
                     // must count as received, otherwise empty files report false loss.
                     if (tf.chunks[data.index] === undefined) tf.received++;
@@ -1188,7 +1203,9 @@ class ComChat {
                 const buffers = [];
                 for (let i = 0; i < meta.totalChunks; i++) {
                     if (chunks[i] === undefined) { missing++; continue; }
-                    const bin = atob(chunks[i]);
+                    let bin;
+                    // 不正なbase64は未捕捉例外でUIを乱さないよう欠損扱いにする
+                    try { bin = atob(chunks[i]); } catch (e) { missing++; continue; }
                     const buf = new Uint8Array(bin.length);
                     for (let j = 0; j < bin.length; j++) buf[j] = bin.charCodeAt(j);
                     buffers.push(buf);
@@ -1432,6 +1449,10 @@ class ComChat {
         messageDiv.appendChild(strong);
         messageDiv.appendChild(span);
         this.chatMessages.appendChild(messageDiv);
+        // 大量投稿によるメモリ肥大を防ぐため、表示は直近300件までに保つ
+        while (this.chatMessages.childElementCount > 300) {
+            this.chatMessages.removeChild(this.chatMessages.firstElementChild);
+        }
         this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
         if (!isOwn && !this.isChatVisible) {
             this.unreadCount++;
@@ -1630,6 +1651,17 @@ class ComChat {
         });
     }
 
+    // 悪意あるピアからの表示系メッセージ洪水(チャット・リアクション等)を抑える簡易レート制限。
+    // ピアごとに1秒窓で上限20通(人間の操作には十分・改造クライアントの連投は超過分を破棄)。
+    // 正規でも高頻度になるファイル転送チャンクは対象外(B-5の境界検証で別途保護)。
+    _allowMessage(senderId) {
+        const now = Date.now();
+        let r = this._msgRate.get(senderId);
+        if (!r || now - r.start >= 1000) { r = { start: now, count: 0 }; this._msgRate.set(senderId, r); }
+        r.count++;
+        return r.count <= 20;
+    }
+
     async toggleVideo() {
         if (!this.localStream) return;
         const videoTrack = this.localStream.getVideoTracks()[0];
@@ -1747,6 +1779,12 @@ class ComChat {
 
     async shareScreen() {
         if (this.currentScreenStream) return;
+        // iPhone/iPad(iOS・iPadOS Safari)はgetDisplayMedia非対応で画面共有を発信できない。
+        // 原因不明の「失敗」に見えないよう、対応端末でないことを明示する(視聴は可能)
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+            this.showStatus('この端末は画面共有の発信に対応していません（iPhone/iPad等）。PCからお試しください', 'error');
+            return;
+        }
         try {
             const screenStream = await navigator.mediaDevices.getDisplayMedia({
                 video: true,
@@ -3233,6 +3271,7 @@ class ComChat {
         this.handStates.clear();
         this.isHandRaised = false;
         this.receivingFiles.clear();
+        this._msgRate.clear();
         this.currentRemoteSharerId = null;
         this.currentScreenStream = null;
         this.cameraVideoTrack = null;
