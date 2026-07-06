@@ -22,6 +22,7 @@ class ComChat {
         this.bgFilterCtx = null;
         this.bgFilterStream = null;
         this.bgFilterAnimId = null;
+        this._bgFilterLoopGen = 0; // 背景フィルターループの世代トークン(非停止・増殖バグ対策)
         this.bgSourceVideo = null;
         this.imageSegmenter = null;
         this.maskCanvas = null;
@@ -1016,6 +1017,9 @@ class ComChat {
     }
 
     handleIncomingCall(call) {
+        // ロック中は、データ接続を経ずに直接かかってきた新規コールも拒否する
+        // (正規フローはhandleConnectionの門番で既に弾かれるが、改造クライアント対策)
+        if (this.isHost && this.roomLocked && !this.connections.has(call.peer)) { call.close(); return; }
         // Reject calls from unknown peers when at capacity
         if (!this.connections.has(call.peer) && this.connections.size >= 5) {
             call.close();
@@ -1100,7 +1104,8 @@ class ComChat {
                 this.cleanupPeer(senderId);
                 break;
             case 'chat':
-                this.displayChatMessage(data.username, data.message);
+                // 発言者名は自己申告(data.username)ではなく真正な名簿から解決する(なりすまし防止)
+                this.displayChatMessage(this.usernames.get(senderId) || 'ユーザー', data.message);
                 break;
             case 'user-join': {
                 this.usernames.set(senderId, data.username);
@@ -1111,6 +1116,8 @@ class ComChat {
                 break;
             }
             case 'peer-list':
+                // peer-listはホストのみが送る設計。なりすまし防止のためホストID(=ルームID)のみ受理する
+                if (senderId !== this.roomId) break;
                 data.peers.forEach(({ id, username }) => {
                     if (!this.connections.has(id) && id !== this.peer.id) {
                         if (username) this.usernames.set(id, username);
@@ -1147,7 +1154,9 @@ class ComChat {
                 break;
             }
             case 'screen-share-start':
-                this.enterRemotePresenterMode(data.peerId, data.username);
+                // なりすまし防止: 本文のpeerIdではなく実際の送信元(senderId)を共有者として扱う
+                // (自己ID詐称による固着やセレクタへの不正文字混入も同時に防ぐ)
+                this.enterRemotePresenterMode(senderId, data.username);
                 break;
             case 'screen-share-stop':
                 // 現在の共有者からの停止通知だけ処理する。共有が重なった場合(A共有中に
@@ -2607,8 +2616,12 @@ class ComChat {
     }
 
     startBgFilterLoop() {
+        // 世代トークンを進める＝以前のループを無効化(再入ガードも兼ねる)。
+        // await grabFrame()中に停止要求が来てもgenの食い違いでループが自然死し、
+        // カメラON/OFFの都度ループが増殖する問題を根治する。
+        const gen = ++this._bgFilterLoopGen;
         const loop = async () => {
-            if (this.bgFilterType === 'none') return;
+            if (this._bgFilterLoopGen !== gen || this.bgFilterType === 'none') return;
             try {
                 if (this.imageCapture) {
                     const bitmap = await this.imageCapture.grabFrame();
@@ -2624,7 +2637,7 @@ class ComChat {
                     bitmap.close();
                 }
             } catch (e) {}
-            if (this.bgFilterType === 'none') return;
+            if (this._bgFilterLoopGen !== gen || this.bgFilterType === 'none') return;
             this.bgFilterAnimId = requestAnimationFrame(loop);
         };
         this.bgFilterAnimId = requestAnimationFrame(loop);
@@ -2674,6 +2687,7 @@ class ComChat {
     }
 
     stopBgFilterLoop() {
+        this._bgFilterLoopGen++; // 実行中ループを無効化(await復帰時にgen不一致で自然死させる)
         if (this.bgFilterAnimId != null) {
             cancelAnimationFrame(this.bgFilterAnimId);
             this.bgFilterAnimId = null;
@@ -3238,6 +3252,8 @@ class ComChat {
         this.confirmJoinBtn.disabled = false;
 
         this.videoGrid.innerHTML = '';
+        // 退室直前のリアクション残像がウェルカム画面に残らないようクリアする
+        if (this.reactionOverlay) this.reactionOverlay.textContent = '';
         this.objectURLs.forEach(url => URL.revokeObjectURL(url));
         this.objectURLs = [];
         this.chatMessages.innerHTML = '';
