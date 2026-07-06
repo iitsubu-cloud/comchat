@@ -1080,8 +1080,12 @@ class ComChat {
                 this.showStatus('ルームは満員です（最大6人）', 'error');
                 break;
             case 'room-locked':
-                this.hangup();
-                this.showStatus('このルームはロックされています', 'error');
+                // ロックの門番はホスト限定(handleConnectionのisHostガード)なので、正規の
+                // 送信者は必ずホスト。なりすましで退室させられないようホストIDのみ受理する
+                if (!this.isLeaving && !this.isHost && senderId === this.roomId) {
+                    this.hangup();
+                    this.showStatus('このルームはロックされています', 'error');
+                }
                 break;
             case 'room-closed':
                 // ホストが退室ボタンで明示的にルームを終了した。なりすまし防止のため
