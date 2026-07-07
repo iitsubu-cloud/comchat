@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Klee+One:wght@400;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/style.css?v=55">
+    <link rel="stylesheet" href="css/style.css?v=56">
     <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>">
 </head>
 <body>
@@ -180,7 +180,13 @@
 
                     <!-- Right: Chat -->
                     <div class="chat-container">
-                        <div class="chat-header"><span class="chat-header-title">チャット<span id="chat-unread-badge" class="chat-unread-badge hidden"></span></span><button id="chat-close-btn" class="chat-close-btn" title="チャットを閉じる" aria-label="チャットを閉じる">✕</button></div>
+                        <div class="chat-header">
+                            <div class="chat-tabs">
+                                <button id="chat-tab-btn" class="chat-tab-btn active">チャット<span id="chat-unread-badge" class="chat-unread-badge hidden"></span></button>
+                                <button id="memo-tab-btn" class="chat-tab-btn">メモ<span id="memo-dot" class="memo-dot hidden"></span></button>
+                            </div>
+                            <button id="chat-close-btn" class="chat-close-btn" title="チャットを閉じる" aria-label="チャットを閉じる">✕</button>
+                        </div>
                         <div id="chat-messages" class="chat-messages">
                         </div>
                         <div class="chat-input-container">
@@ -192,6 +198,15 @@
                             </button>
                             <input type="text" id="chat-input" class="chat-input" placeholder="メッセージを入力...">
                             <button id="chat-send" class="chat-send">送信</button>
+                        </div>
+                        <!-- 共有メモ（メモタブ選択時のみ表示。内容は全員に同期される） -->
+                        <div id="memo-view" class="memo-view hidden">
+                            <textarea id="memo-textarea" class="memo-textarea" maxlength="20000" placeholder="会議の決定事項やメモをここに（全員で共有されます）"></textarea>
+                            <div class="memo-toolbar">
+                                <button id="memo-undo-btn" class="memo-toolbar-btn" title="直前の内容に戻す" disabled>↩ 戻す</button>
+                                <button id="memo-download-btn" class="memo-toolbar-btn" title="メモをテキストファイルで保存">⬇ 保存</button>
+                                <span id="memo-editing-indicator" class="memo-editing-indicator"></span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -364,7 +379,7 @@
 
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
-    <script src="js/app.js?v=114"></script>
+    <script src="js/app.js?v=115"></script>
 
     <script>
         // タブを閉じる/ページ遷移時にリソースだけ解放（UI操作は不要）

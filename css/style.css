@@ -574,12 +574,6 @@ body {
     justify-content: space-between;
 }
 
-.chat-header-title {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-}
-
 /* チャットを閉じるボタン（モバイルのボトムシート用、PCでは非表示） */
 .chat-close-btn {
     display: none;
@@ -1792,4 +1786,111 @@ body {
         padding: 5px 10px;
         font-size: 0.76em;
     }
+}
+
+/* 共有メモ(チャットパネル内のタブ)。メディアクエリなしの全幅共通スタイルなので
+   末尾追記でも既存の768px/480px/360pxブロックと競合しない(.hiddenは!importantで勝つ) */
+/* チャットヘッダーのタブ(チャット/メモ)。ヘッダーがティールのグラデーション背景のため、
+   アクティブは濃いティール(#0f766e、.more-menu-item.activeと同系色)の背景で示す */
+.chat-tabs {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+}
+
+.chat-tab-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: none;
+    border: none;
+    font: inherit;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.75);
+    padding: 4px 10px;
+    border-radius: 8px;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.chat-tab-btn.active {
+    background: #0f766e;
+    color: white;
+}
+
+/* メモの更新ドット(未読バッジより控えめな8pxの赤丸) */
+.memo-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #dc3545;
+    flex-shrink: 0;
+}
+
+/* メモビュー(チャットの#chat-messages+入力欄と同じ領域を占有する) */
+.memo-view {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: #f8f9fa;
+}
+
+/* 入力欄は残り高さ一杯に伸ばす。配色は.chat-inputを踏襲 */
+.memo-textarea {
+    flex: 1;
+    min-height: 0;
+    margin: 10px;
+    padding: 10px 12px;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    background: white;
+    font: inherit;
+    font-size: 0.9em;
+    line-height: 1.5;
+    resize: none;
+    outline: none;
+}
+
+.memo-textarea:focus {
+    border-color: #0891b2;
+}
+
+/* 下部ツールバー(.chat-input-containerと同等の高さ・padding感) */
+.memo-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 15px;
+    border-top: 1px solid #e9ecef;
+}
+
+.memo-toolbar-btn {
+    padding: 8px 14px;
+    background: #0891b2;
+    color: white;
+    border: none;
+    border-radius: 16px;
+    font-size: 0.85em;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.memo-toolbar-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+/* 他ピアの編集中インジケーター(右寄せ・小さめグレー。普段は空) */
+.memo-editing-indicator {
+    margin-left: auto;
+    min-width: 0;
+    font-size: 0.78em;
+    color: #6b7280;
+    text-align: right;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }

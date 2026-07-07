@@ -69,6 +69,16 @@ class ComChat {
         this.unreadCount = 0;
         this.isChatVisible = true;
         this.chatObserver = null;
+        // 共有メモ(チャットパネル内のタブ)。全文をrev付きで送る後勝ち同期
+        // (同revはpeerId辞書順タイブレーク)で全員の内容を揃える
+        this.memoText = '';
+        this.memoRev = 0;
+        this.memoDirty = false;          // 自分の未送信編集があるか(デバウンス待ち)
+        this.memoSnapshots = [];         // 「戻す」用の直前テキスト履歴(最大10件)
+        this.activeChatTab = 'chat';     // 'chat' | 'memo'
+        this._memoDebounceTimer = null;  // 入力デバウンス(800ms)で全文送信の頻度を抑える
+        this._memoEditingTimer = null;   // 「◯◯さんが編集中…」表示の消去タイマー
+        this._memoEditingSignalAt = 0;   // 自分のmemo-editing送信スロットル(2秒)
         // リアクション/挙手
         this.handStates = new Map();
         this.isHandRaised = false;
@@ -228,6 +238,22 @@ class ComChat {
         document.addEventListener('webkitfullscreenchange', onFsChange);
         if (this.toggleChatBtn) this.toggleChatBtn.addEventListener('click', () => this.toggleChat());
         if (this.chatCloseBtn) this.chatCloseBtn.addEventListener('click', () => this.closeChat());
+
+        // 共有メモ(チャットパネル内のタブ)
+        this.chatTabBtn = document.getElementById('chat-tab-btn');
+        this.memoTabBtn = document.getElementById('memo-tab-btn');
+        this.memoDot = document.getElementById('memo-dot');
+        this.memoView = document.getElementById('memo-view');
+        this.memoTextarea = document.getElementById('memo-textarea');
+        this.memoUndoBtn = document.getElementById('memo-undo-btn');
+        this.memoDownloadBtn = document.getElementById('memo-download-btn');
+        this.memoEditingIndicator = document.getElementById('memo-editing-indicator');
+        this.chatInputContainer = document.querySelector('.chat-input-container');
+        this.chatTabBtn.addEventListener('click', () => this.switchChatTab('chat'));
+        this.memoTabBtn.addEventListener('click', () => this.switchChatTab('memo'));
+        this.memoTextarea.addEventListener('input', () => this.onMemoInput());
+        this.memoUndoBtn.addEventListener('click', () => this.undoMemo());
+        this.memoDownloadBtn.addEventListener('click', () => this.downloadMemo());
 
         this.fileInput = document.getElementById('file-input');
         this.fileAttachBtn = document.getElementById('file-attach-btn');
@@ -1067,6 +1093,9 @@ class ComChat {
         conn.send({ type: 'camera-state', enabled: cameraEnabled });
         conn.send({ type: 'hand-state', raised: this.isHandRaised });
         if (this.isRecording) conn.send({ type: 'recording-state', recording: true });
+        // 共有メモの現在内容も送る(後入り・復帰ピアが同じメモを見られるように)。
+        // 受信側の後勝ち判定(rev)により、古い内容が新しい内容を巻き戻すことはない
+        if (this.memoText) conn.send({ type: 'memo-update', rev: this.memoRev, text: this.memoText });
     }
 
     handleIncomingCall(call) {
@@ -1242,6 +1271,34 @@ class ComChat {
                 // B開始→A停止)、無条件に解除するとBの共有を見ている全員が誤って解除される。
                 if (senderId === this.currentRemoteSharerId) this.exitRemotePresenterMode();
                 break;
+            case 'memo-update': {
+                if (!this._allowMessage(senderId)) break; // 連投フラッディング対策
+                const rev = Number(data.rev);
+                if (!Number.isFinite(rev) || rev <= 0) break; // 不正なrevは弾く
+                // 巨大テキストによるメモリ肥大対策でtextareaのmaxlengthと同じ2万字に切り詰める
+                const text = String(data.text ?? '').slice(0, 20000);
+                // 後勝ち同期: revが新しいものだけ適用。同revはpeerId辞書順で決定的に
+                // タイブレークし、全端末が同じ勝者を選ぶことで内容の食い違いを防ぐ
+                const newer = rev > this.memoRev || (rev === this.memoRev && senderId > this.peer.id);
+                if (!newer) break;
+                this.memoRev = rev; // 自分が次に編集する時はこれより大きいrevで勝てる
+                if (this.memoDirty) break; // 自分の入力中は上書きしない(直後の自分の送信が後勝ちで反映される)
+                if (text === this.memoText) break;
+                this._pushMemoSnapshot(this.memoText); // 上書き前の内容を「戻す」履歴へ
+                this.memoText = text;
+                this.memoTextarea.value = text;
+                this._showMemoDotIfHidden(); // メモタブ非表示中なら更新ドットで知らせる
+                break;
+            }
+            case 'memo-editing': {
+                if (!this._allowMessage(senderId)) break; // 連投フラッディング対策
+                // 編集者名は自己申告(data.username)ではなく真正な名簿から解決する(なりすまし防止)
+                const name = this.usernames.get(senderId) || 'ユーザー';
+                this.memoEditingIndicator.textContent = `${name}さんが編集中…`;
+                clearTimeout(this._memoEditingTimer);
+                this._memoEditingTimer = setTimeout(() => { this.memoEditingIndicator.textContent = ''; }, 3000);
+                break;
+            }
             case 'file-meta': {
                 // 悪意あるピアからの過大/不正なメタ情報を弾く(受信側メモリ膨張・フリーズ対策)。
                 // 上限3200 = ceil(200MB / 64KBチャンク)＝送信側sendFileの正規最大チャンク数。
@@ -1530,7 +1587,8 @@ class ComChat {
             this.chatMessages.removeChild(this.chatMessages.firstElementChild);
         }
         this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
-        if (!isOwn && !this.isChatVisible) {
+        // パネルが開いていてもメモタブ表示中はチャットが見えていないため未読に加算する
+        if (!isOwn && (!this.isChatVisible || this.activeChatTab === 'memo')) {
             this.unreadCount++;
             this.updateUnreadBadge();
         }
@@ -1583,9 +1641,14 @@ class ComChat {
         if (!this.chatContainer) return;
         this.chatContainer.classList.add('open');
         this.chatContainer.classList.remove('collapsed');
-        this.isChatVisible = true;
-        this.clearUnreadBadge();
-        this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+        // メモタブ表示中に開いた場合、チャットは見えていないので未読は消さない
+        if (this.activeChatTab === 'memo') {
+            this.memoDot.classList.add('hidden');
+        } else {
+            this.isChatVisible = true;
+            this.clearUnreadBadge();
+            this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+        }
         this.relayoutVideoGrid();
     }
 
@@ -1595,6 +1658,105 @@ class ComChat {
         this.chatContainer.classList.add('collapsed');
         this.isChatVisible = false;
         this.relayoutVideoGrid();
+    }
+
+    // ===== 共有メモ =====
+    // チャットパネル内のタブ切替('chat' | 'memo')。チャットビュー(#chat-messages+入力欄)と
+    // メモビュー(#memo-view)の表示を排他にする。パネル自体の開閉ロジックには手を触れない。
+    switchChatTab(tab) {
+        this.activeChatTab = tab;
+        const isMemo = tab === 'memo';
+        this.chatTabBtn.classList.toggle('active', !isMemo);
+        this.memoTabBtn.classList.toggle('active', isMemo);
+        this.chatMessages.classList.toggle('hidden', isMemo);
+        this.chatInputContainer.classList.toggle('hidden', isMemo);
+        this.memoView.classList.toggle('hidden', !isMemo);
+        if (isMemo) {
+            // メモが見えたので更新ドットを消す(チャット未読はそのまま保持する)
+            this.memoDot.classList.add('hidden');
+        } else {
+            // チャットタブに戻ったら(パネルが開いていれば)未読を消して最新までスクロール
+            if (this.isChatCurrentlyOpen()) {
+                this.isChatVisible = true;
+                this.clearUnreadBadge();
+            }
+            this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+        }
+    }
+
+    // メモ入力のたびに呼ばれる。全文送信は800msデバウンス、
+    // 「編集中…」シグナルは2秒スロットルで送信頻度を抑える。
+    onMemoInput() {
+        this.memoDirty = true;
+        const now = Date.now();
+        if (now - this._memoEditingSignalAt >= 2000) {
+            this._memoEditingSignalAt = now;
+            this.broadcast({ type: 'memo-editing' });
+        }
+        clearTimeout(this._memoDebounceTimer);
+        this._memoDebounceTimer = setTimeout(() => this._flushMemoUpdate(), 800);
+    }
+
+    // デバウンス確定: revを進めて全文をbroadcastする(受信側は後勝ちで適用)
+    _flushMemoUpdate() {
+        this._memoDebounceTimer = null;
+        const text = this.memoTextarea.value.slice(0, 20000);
+        this.memoDirty = false;
+        if (text === this.memoText) return;
+        this._pushMemoSnapshot(this.memoText); // 送信前の旧内容を「戻す」履歴へ
+        this.memoRev++;
+        this.memoText = text;
+        this.broadcast({ type: 'memo-update', rev: this.memoRev, text: this.memoText });
+    }
+
+    // 「戻す」用の履歴に直前テキストを積む(最大10件・直前と同一なら積まない)
+    _pushMemoSnapshot(text) {
+        if (this.memoSnapshots[this.memoSnapshots.length - 1] === text) return;
+        this.memoSnapshots.push(text);
+        if (this.memoSnapshots.length > 10) this.memoSnapshots.shift();
+        this._updateMemoUndoBtn();
+    }
+
+    _updateMemoUndoBtn() {
+        this.memoUndoBtn.disabled = this.memoSnapshots.length === 0;
+    }
+
+    // 「戻す」: 履歴の直前テキストへ戻し、新しい編集としてrevを進めて全員へ伝搬する
+    undoMemo() {
+        if (this.memoSnapshots.length === 0) return;
+        const text = this.memoSnapshots.pop();
+        this._updateMemoUndoBtn();
+        clearTimeout(this._memoDebounceTimer); // 入力中の未送信分は破棄(undo結果を正とする)
+        this._memoDebounceTimer = null;
+        this.memoDirty = false;
+        this.memoRev++;
+        this.memoText = text;
+        this.memoTextarea.value = text;
+        this.broadcast({ type: 'memo-update', rev: this.memoRev, text: this.memoText });
+    }
+
+    // メモをテキストファイルとしてローカル保存する(録音保存と同じ作法)。空白のみなら何もしない
+    downloadMemo() {
+        const text = this.memoTextarea ? this.memoTextarea.value : this.memoText;
+        if (!text.trim()) return;
+        const blob = new Blob([text], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const now = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `comchat-memo-${stamp}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    // メモタブが今見えていない(チャットタブ表示中/パネルが閉じている)時だけ更新ドットを出す
+    _showMemoDotIfHidden() {
+        if (this.activeChatTab === 'memo' && this.isChatCurrentlyOpen()) return;
+        this.memoDot.classList.remove('hidden');
     }
 
     async sendFile(file) {
@@ -3588,6 +3750,22 @@ class ComChat {
         this.objectURLs.forEach(url => URL.revokeObjectURL(url));
         this.objectURLs = [];
         this.chatMessages.innerHTML = '';
+        // 共有メモ: 内容が残っていれば退室時に自動保存し(ローカル完結)、状態を完全リセットする
+        this.downloadMemo();
+        this.memoText = '';
+        this.memoRev = 0;
+        this.memoDirty = false;
+        this.memoSnapshots = [];
+        this._updateMemoUndoBtn();
+        this.memoTextarea.value = '';
+        clearTimeout(this._memoDebounceTimer);
+        this._memoDebounceTimer = null;
+        clearTimeout(this._memoEditingTimer);
+        this._memoEditingTimer = null;
+        this._memoEditingSignalAt = 0;
+        this.memoEditingIndicator.textContent = '';
+        this.memoDot.classList.add('hidden');
+        this.switchChatTab('chat');
         this.isSendingFile = false;
         this.fileAttachBtn.disabled = false;
         if (this.chatObserver) this.chatObserver.unobserve(this.chatMessages);
