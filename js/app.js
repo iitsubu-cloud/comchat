@@ -140,6 +140,12 @@ class ComChat {
         this.toggleAudioBtn = document.getElementById('toggle-audio');
         this.shareScreenBtn = document.getElementById('share-screen');
         this.stopShareBtn = document.getElementById('stop-share-btn');
+        // iPhone/iPad(iOS・iPadOS)はgetDisplayMedia非対応で画面共有を発信できないため、
+        // ボタン自体を出さずコントロールバーの余白に充てる(視聴専用のscreen-share-containerは別要素で無影響)
+        this.supportsScreenShare = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+        if (!this.supportsScreenShare) {
+            this.shareScreenBtn.closest('.ctrl-item').classList.add('hidden');
+        }
         this.shareViewerLabel = document.getElementById('share-viewer-label');
         this.screenFullscreenBtn = document.getElementById('screen-fullscreen-btn');
         this.screenSharePlaceholder = document.getElementById('screen-share-placeholder');

@@ -796,7 +796,9 @@ body {
     font-size: 0.68em;
     color: #666;
     font-weight: 500;
+    -webkit-user-select: none;
     user-select: none;
+    -webkit-touch-callout: none;
     letter-spacing: 0.02em;
 }
 
@@ -959,7 +961,9 @@ body {
     transition: background 0.15s;
     white-space: nowrap;
     text-align: center;
+    -webkit-user-select: none;
     user-select: none;
+    -webkit-touch-callout: none;
 }
 
 .filter-option:hover {
@@ -1089,6 +1093,10 @@ body {
     color: #777;
     white-space: nowrap;
     margin-right: 2px;
+    /* 編集モード中のドラッグでテキスト選択されるのを防ぐ */
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
 }
 
 .reorder-toolbar-btn {
