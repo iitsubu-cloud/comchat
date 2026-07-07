@@ -520,8 +520,12 @@ body {
     border: 2px solid rgba(255,255,255,0.4);
 }
 
-/* 視聴側では共有者のタイルは大画面と同内容のため隠す(video要素は生かして音声再生を継続) */
-.call-main.presenter-mode .video-container.sharer-tile { display: none; }
+/* 視聴側の共有者タイル: 大画面と同内容のvideoだけ隠し、カメラオフと同じ黒地＋中央名で
+   在席表示する(タイル・名前・ミュートアイコンは見せる)。video要素は生かして共有音声の
+   再生を継続(visibility:hiddenは再生を止めない)。中央名のdisplayはJSがカメラオフ用に
+   インラインで制御しているため!importantで共有中のみ上書きし、終了後は自動で戻る */
+.call-main.presenter-mode .video-container.sharer-tile .video-element { visibility: hidden; }
+.call-main.presenter-mode .video-container.sharer-tile .video-center-name { display: block !important; }
 
 /* Call screen two-column layout */
 #call-screen {
