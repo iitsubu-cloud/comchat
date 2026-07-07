@@ -1796,6 +1796,11 @@ class ComChat {
 
             this.currentScreenStream = screenStream;
             this.cameraVideoTrack = cameraVideoTrack;
+            // 直前まで他人の共有を視聴していた場合の残留値をクリアする。
+            // 残したままだと、旧共有者が譲る際のscreen-share-stop受信ガード
+            // (senderId === currentRemoteSharerId)が誤って一致し、
+            // 始めたばかりの自分の共有表示を自分で畳んでしまう(後勝ちが成立しない)
+            this.currentRemoteSharerId = null;
 
             // Send screen to remote peers
             this.calls.forEach((call) => {
