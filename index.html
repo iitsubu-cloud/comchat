@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Klee+One:wght@400;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/style.css?v=51">
+    <link rel="stylesheet" href="css/style.css?v=52">
     <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>">
 </head>
 <body>
@@ -50,6 +50,8 @@
             <div id="call-screen" class="hidden">
                 <!-- リアクション全画面オーバーレイ(fixed配置。DOM上の位置はどこでもよい) -->
                 <div id="reaction-overlay"></div>
+                <!-- 録音中インジケーター(fixed配置。DOM上の位置はどこでもよい) -->
+                <div id="recording-indicator" class="hidden"></div>
                 <div class="call-layout">
                     <!-- Left: Video + Controls + Room Info -->
                     <div class="call-main">
@@ -283,6 +285,13 @@
             </svg>
             <span class="more-menu-item-label">背景フィルター</span>
         </button>
+        <button type="button" class="more-menu-item" id="record-btn" title="録音">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="9"/>
+                <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"/>
+            </svg>
+            <span class="more-menu-item-label" id="record-label">録音を開始</span>
+        </button>
         <button type="button" class="more-menu-item hidden" id="room-lock-btn" title="ルームをロック">
             <svg class="lock-icon-unlocked" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <rect x="4" y="11" width="16" height="10" rx="2"/>
@@ -355,7 +364,7 @@
 
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
-    <script src="js/app.js?v=111"></script>
+    <script src="js/app.js?v=112"></script>
 
     <script>
         // タブを閉じる/ページ遷移時にリソースだけ解放（UI操作は不要）

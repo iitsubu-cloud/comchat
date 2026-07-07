@@ -75,6 +75,18 @@ class ComChat {
         this._lastReactionSentAt = 0;
         this.REACTION_EMOJIS = ['👍', '👏', '😂', '🎉', '❤️', '😮'];
 
+        // 録音機能(全員のマイク音声をミックスしてローカル保存。用途別にAudioContextを
+        // 分離する作法(ensureSpeakingAudioContext参照)に合わせ、録音専用のインスタンスを使う)
+        this.isRecording = false;
+        this.mediaRecorder = null;
+        this.recordingChunks = [];
+        this.recAudioContext = null;
+        this.recDest = null;
+        this.recSources = new Map(); // key: peerId または '__self__'
+        this.recordingStates = new Map(); // リモートの録音中ピアId -> true(インジケーター表示用)
+        this.recStartTime = 0;
+        this.recTimerInterval = null;
+
         // コントロールバーの並べ替え(左利き対応・編集モード)
         this.CONTROL_ORDER_STORAGE_KEY = 'comchat-control-order';
         this.DEFAULT_CONTROL_ORDER = ['toggle-video', 'toggle-audio', 'share-screen', 'reaction-btn', 'toggle-chat', 'hangup', 'more-btn'];
@@ -298,6 +310,17 @@ class ComChat {
             e.stopPropagation();
             this.moreMenu.classList.add('hidden');
             this.toggleRoomLock();
+        });
+
+        // 録音
+        this.recordBtn = document.getElementById('record-btn');
+        this.recordLabel = document.getElementById('record-label');
+        this.recordingIndicator = document.getElementById('recording-indicator');
+        this.recordBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.moreMenu.classList.add('hidden');
+            if (this.isRecording) this.stopRecording();
+            else this.startRecording();
         });
 
         this.reactionBtn = document.getElementById('reaction-btn');
@@ -949,6 +972,7 @@ class ComChat {
             this.muteStates.delete(conn.peer);
             this.cameraStates.delete(conn.peer);
             this.handStates.delete(conn.peer);
+            this.detachRecordingSource(conn.peer);
             this.removeVideoElement(conn.peer);
             if (this.currentRemoteSharerId === conn.peer) {
                 this.exitRemotePresenterMode();
@@ -969,6 +993,7 @@ class ComChat {
             const cameraEnabled = this.localStream?.getVideoTracks()[0]?.enabled ?? true;
             conn.send({ type: 'camera-state', enabled: cameraEnabled });
             conn.send({ type: 'hand-state', raised: this.isHandRaised });
+            if (this.isRecording) conn.send({ type: 'recording-state', recording: true });
             if (this.currentScreenStream) {
                 conn.send({ type: 'screen-share-start', peerId: this.peer.id, username: this.username });
             }
@@ -1000,6 +1025,7 @@ class ComChat {
             this.muteStates.delete(conn.peer);
             this.cameraStates.delete(conn.peer);
             this.handStates.delete(conn.peer);
+            this.detachRecordingSource(conn.peer);
             this.removeVideoElement(conn.peer);
             if (this.currentRemoteSharerId === conn.peer) {
                 this.exitRemotePresenterMode();
@@ -1043,6 +1069,8 @@ class ComChat {
             this.addVideoElement(call.peer, remoteStream, label);
             // 発話インジケーター: このリモートの受信ストリームに解析を接続
             this.attachSpeakingAnalyser(call.peer, remoteStream);
+            // 録音中に新しく届いたリモート音声もミックスへ追加する(遅延参加・再接続対応)
+            if (this.isRecording) this.attachRecordingSource(call.peer, remoteStream);
             // 画面共有中に遅れて参加した場合、共有画面を大画面に反映する
             if (this.currentRemoteSharerId === call.peer) {
                 this.screenShareVideo.srcObject = remoteStream;
@@ -1151,6 +1179,17 @@ class ComChat {
                 }
                 break;
             }
+            case 'recording-state': {
+                if (!this._allowMessage(senderId)) break; // 連投フラッディング対策
+                const rec = !!data.recording;
+                if (rec) this.recordingStates.set(senderId, true);
+                else this.recordingStates.delete(senderId);
+                this.updateRecordingIndicator();
+                // 送信者名は自己申告(data.username)ではなく真正な名簿から解決する(なりすまし防止)
+                const name = this.usernames.get(senderId) || 'ユーザー';
+                this.showStatus(rec ? `${name}さんが録音を開始しました` : `${name}さんが録音を終了しました`, rec ? 'error' : 'connected');
+                break;
+            }
             case 'camera-state': {
                 this.cameraStates.set(senderId, data.enabled);
                 const cn = document.querySelector(`#video-${senderId} .video-center-name`);
@@ -1237,6 +1276,7 @@ class ComChat {
         this.muteStates.delete(peerId);
         this.cameraStates.delete(peerId);
         this.handStates.delete(peerId);
+        this.detachRecordingSource(peerId);
         this.removeVideoElement(peerId);
         if (this.currentRemoteSharerId === peerId) {
             this.exitRemotePresenterMode();
@@ -2055,6 +2095,202 @@ class ComChat {
         this.mixedAudioTrack = null;
         if (this.mixAudioContext) { try { this.mixAudioContext.close(); } catch {} }
         this.mixAudioContext = null;
+    }
+
+    // ===== 録音 (全員のマイク音声をミックスしてローカル保存) =====
+    // 画面共有ミックス(mixAudioContext)・発話解析(speakingAudioContext)とは別インスタンスにする
+    // (このプロジェクトの作法: 用途別にAudioContextを分離する。ensureSpeakingAudioContext参照)
+
+    // 録音中のピア音声トラックをミックス先へ接続する。同一peerIdのsourceが既にあれば
+    // 先にdisconnectしてから置き換える(再接続・callの張り直しでの二重ミックス防止)。
+    attachRecordingSource(peerId, stream) {
+        if (!this.recAudioContext || !this.recDest) return;
+        const audioTrack = stream.getAudioTracks()[0];
+        if (!audioTrack) return;
+        const existing = this.recSources.get(peerId);
+        if (existing) { try { existing.disconnect(); } catch {} }
+        try {
+            const source = this.recAudioContext.createMediaStreamSource(new MediaStream([audioTrack]));
+            source.connect(this.recDest);
+            this.recSources.set(peerId, source);
+        } catch {}
+    }
+
+    // ピア退場時、録音ミックスから当該ピアの音声を切り離す(録音自体は継続)。
+    // 併せて「そのピアが録音中」インジケーター状態も消す(相手はもう居ないため)。
+    detachRecordingSource(peerId) {
+        const source = this.recSources.get(peerId);
+        if (source) { try { source.disconnect(); } catch {} }
+        this.recSources.delete(peerId);
+        const hadState = this.recordingStates.delete(peerId);
+        if (hadState) this.updateRecordingIndicator();
+    }
+
+    // 経過時間を mm:ss 形式にする(録音インジケーター用)
+    _formatRecTime(ms) {
+        const totalSec = Math.floor(ms / 1000);
+        const m = String(Math.floor(totalSec / 60)).padStart(2, '0');
+        const s = String(totalSec % 60).padStart(2, '0');
+        return `${m}:${s}`;
+    }
+
+    // 自分の録音経過時間 + リモートの録音中インジケーターを1箇所にまとめて描画する。
+    // 状態変化のたび(開始/停止/ピア増減/1秒毎のタイマー)に呼ぶ。
+    updateRecordingIndicator() {
+        if (!this.recordingIndicator) return;
+        const parts = [];
+        if (this.isRecording) {
+            const elapsed = this._formatRecTime(Date.now() - this.recStartTime);
+            parts.push(`🔴 録音中 ${elapsed}`);
+        }
+        if (this.recordingStates.size > 0) {
+            const names = Array.from(this.recordingStates.keys())
+                .map(id => this.usernames.get(id) || 'ユーザー');
+            parts.push(`🔴 ${names.join('、')}さんが録音中`);
+        }
+        if (parts.length === 0) {
+            this.recordingIndicator.classList.add('hidden');
+            this.recordingIndicator.textContent = '';
+            return;
+        }
+        this.recordingIndicator.textContent = parts.join('　');
+        this.recordingIndicator.classList.remove('hidden');
+    }
+
+    async startRecording() {
+        if (this.isRecording) return;
+        if (!window.MediaRecorder) {
+            this.showStatus('この端末は録音に対応していません', 'error');
+            return;
+        }
+        try {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) {
+                this.showStatus('この端末は録音に対応していません', 'error');
+                return;
+            }
+            this.recAudioContext = new AudioCtx();
+            // 自動再生ポリシー等でsuspendedのまま生成されると無音ファイルになるため念のため起こす
+            // (クリックハンドラ内なので通常はrunningだが、ensureSpeakingAudioContextと同じ配慮)
+            if (this.recAudioContext.state === 'suspended') {
+                this.recAudioContext.resume().catch(() => {});
+            }
+            this.recDest = this.recAudioContext.createMediaStreamDestination();
+            this.recSources.clear();
+
+            // 自分のマイク音声を接続(マイクミュート中はtrack.enabled=falseの自然な挙動で
+            // 無音になる=仕様として許容する)
+            const micTrack = this.localStream?.getAudioTracks()[0];
+            if (micTrack) {
+                const micSource = this.recAudioContext.createMediaStreamSource(new MediaStream([micTrack]));
+                micSource.connect(this.recDest);
+                this.recSources.set('__self__', micSource);
+            }
+            // 全リモートピアの音声を接続(自分が画面共有中でも、共有音声は録音ミックスに
+            // 含めない=v1の割り切り。ここではcall.remoteStreamのマイク由来トラックのみを使う)
+            this.calls.forEach((call, peerId) => {
+                if (call.remoteStream) this.attachRecordingSource(peerId, call.remoteStream);
+            });
+
+            // mimeType選択: MP4(.m4a)優先、次点でWebM(Opus)、どちらも不可なら既定(.webm)
+            let mimeType = '';
+            let ext = 'webm';
+            if (MediaRecorder.isTypeSupported('audio/mp4')) {
+                mimeType = 'audio/mp4';
+                ext = 'm4a';
+            } else if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+                mimeType = 'audio/webm;codecs=opus';
+                ext = 'webm';
+            }
+            this._recFileExt = ext;
+
+            this.recordingChunks = [];
+            this.mediaRecorder = mimeType
+                ? new MediaRecorder(this.recDest.stream, { mimeType })
+                : new MediaRecorder(this.recDest.stream);
+
+            this.mediaRecorder.ondataavailable = (e) => {
+                if (e.data && e.data.size > 0) this.recordingChunks.push(e.data);
+            };
+            this.mediaRecorder.onstop = () => {
+                // ファイル保存をonstopに一元化することで、停止ボタンでも退室(hangup)でも
+                // 確実に保存される
+                this.saveRecordingFile();
+                this.stopRecordingCleanup();
+            };
+            this.mediaRecorder.start(1000); // 1秒タイムスライス
+
+            this.isRecording = true;
+            this.recStartTime = Date.now();
+            this.recTimerInterval = setInterval(() => this.updateRecordingIndicator(), 1000);
+            this.broadcast({ type: 'recording-state', recording: true });
+            this.showStatus('録音を開始しました（全員に通知されます）', 'error');
+            this.recordBtn.classList.add('active', 'recording-active');
+            this.recordLabel.textContent = '録音を停止';
+            this.updateRecordingIndicator();
+        } catch (error) {
+            this.stopRecordingCleanup();
+            this.showStatus('録音を開始できませんでした', 'error');
+        }
+    }
+
+    stopRecording() {
+        if (!this.isRecording || !this.mediaRecorder) return;
+        // 状態フラグの反転とbroadcast/通知はここで同期的に行う。mediaRecorder.onstopは
+        // 次のイベントループまで発火しないため、hangup()から呼ばれた場合はこの後すぐ
+        // conn.close()が走る。onstop側に broadcast を任せると、その時点で接続が
+        // 既に閉じておりrecording-state:falseが相手に届かない(インジケーターが残留する)。
+        this.isRecording = false;
+        this.broadcast({ type: 'recording-state', recording: false });
+        this.showStatus('録音を終了しました', 'connected');
+        this.recordBtn.classList.remove('active', 'recording-active');
+        this.recordLabel.textContent = '録音を開始';
+        this.updateRecordingIndicator();
+        // stop()を呼ぶとonstop内でBlob保存→リソース後始末、の順に進む(後始末を先にやると
+        // 録音データが失われるため、onstop経由の一元化フローに任せる)
+        try { this.mediaRecorder.stop(); } catch {
+            this.stopRecordingCleanup();
+        }
+    }
+
+    // 録音データをBlobにまとめてダウンロードさせる(onstopから呼ばれる)
+    saveRecordingFile() {
+        if (this.recordingChunks.length === 0) return;
+        const mimeType = this.mediaRecorder?.mimeType || 'audio/webm';
+        const blob = new Blob(this.recordingChunks, { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const now = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+        const ext = this._recFileExt || 'webm';
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `comchat-recording-${stamp}.${ext}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    // 録音リソースの後始末(AudioContext/Source/タイマー等)。状態フラグの反転とbroadcastは
+    // stopRecording()側で同期的に済ませてあるため、ここでは純粋なリソース解放のみ行う。
+    // mediaRecorder.onstopの発火(Blob保存)を妨げないよう、stop()呼び出し→onstop内で
+    // これを呼ぶ、という順序で使う(startRecording失敗時のロールバックにも流用)。
+    stopRecordingCleanup() {
+        this.recSources.forEach(s => { try { s.disconnect(); } catch {} });
+        this.recSources.clear();
+        if (this.recAudioContext) { try { this.recAudioContext.close(); } catch {} }
+        this.recAudioContext = null;
+        this.recDest = null;
+        this.mediaRecorder = null;
+        this.recordingChunks = [];
+        if (this.recTimerInterval) { clearInterval(this.recTimerInterval); this.recTimerInterval = null; }
+        this.isRecording = false;
+        this.recStartTime = 0;
+
+        this.recordBtn.classList.remove('active', 'recording-active');
+        this.recordLabel.textContent = '録音を開始';
+        this.updateRecordingIndicator();
     }
 
     // ===== 発話インジケーター (active speaker detection) =====
@@ -3215,6 +3451,9 @@ class ComChat {
     hangup() {
         this.isLeaving = true;
         this.isReconnecting = false;
+        // 録音中なら退室前に必ず停止する(broadcastがまだ生きている＝peer-leaving/room-closed
+        // 送信や接続closeより前)。これで録音ファイルが保存され、他参加者のインジケーターも消える
+        if (this.isRecording) this.stopRecording();
         // 通話終了時に並べ替え編集モードが残っていれば強制終了(ツールバー非表示・揺れ解除・
         // ドラッグ状態解消)。ウェルカム画面に編集UIが漏れないようにする。保存はしない。
         this.exitReorderMode(false);
@@ -3275,6 +3514,8 @@ class ComChat {
         this.cameraStates.clear();
         this.handStates.clear();
         this.isHandRaised = false;
+        this.recordingStates.clear();
+        this.updateRecordingIndicator();
         this.receivingFiles.clear();
         this._msgRate.clear();
         this.currentRemoteSharerId = null;
@@ -3290,6 +3531,8 @@ class ComChat {
         this.roomLockBtn.classList.remove('locked', 'active');
         this.roomLockBtn.title = 'ルームをロック';
         this.roomLockLabel.textContent = 'ルームをロック';
+        this.recordBtn.classList.remove('active', 'recording-active');
+        this.recordLabel.textContent = '録音を開始';
         this.updateHandToggleBtn();
         this.createRoomBtn.disabled = false;
         this.joinRoomBtn.disabled = false;

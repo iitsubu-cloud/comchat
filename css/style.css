@@ -1019,6 +1019,12 @@ body {
     color: white;
 }
 
+/* 録音中の#record-btn。他のactive(ティール)と区別するため赤系の専用スタイルにする */
+.more-menu-item.recording-active {
+    background: #dc2626;
+    color: white;
+}
+
 .more-menu-item svg {
     width: 20px;
     height: 20px;
@@ -1208,6 +1214,35 @@ body {
     pointer-events: none;
     overflow: hidden;
     z-index: 9000;
+}
+
+/* 録音中インジケーター。画面上部中央のピル表示。#reaction-overlay(下部から上昇)とは
+   位置が重ならないため同じz-index帯(9000)でも問題ない */
+#recording-indicator {
+    position: fixed;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9000;
+    pointer-events: none;
+    background: rgba(220, 38, 38, 0.85);
+    color: white;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 0.78em;
+    font-weight: 600;
+    white-space: nowrap;
+    max-width: 90vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    /* 内容の先頭「🔴」ごと、ピル全体をゆっくり点滅させて録音中を目立たせる
+       (textContentで組み立てるため●だけを個別要素にできず、全体点滅で代用) */
+    animation: recording-dot-blink 1.6s ease-in-out infinite;
+}
+
+@keyframes recording-dot-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
 }
 
 /* 個々のリアクション: 絵文字+送信者名タグを縦に積んだコンテナ。
