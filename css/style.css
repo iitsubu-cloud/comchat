@@ -520,6 +520,9 @@ body {
     border: 2px solid rgba(255,255,255,0.4);
 }
 
+/* 視聴側では共有者のタイルは大画面と同内容のため隠す(video要素は生かして音声再生を継続) */
+.call-main.presenter-mode .video-container.sharer-tile { display: none; }
+
 /* Call screen two-column layout */
 #call-screen {
     flex: 1;

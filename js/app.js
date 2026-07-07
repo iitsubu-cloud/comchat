@@ -408,6 +408,18 @@ class ComChat {
             if (this._precallPressTarget !== undefined && this._precallPressTarget !== this.precallDialog) return;
             this.cancelPreCall();
         });
+
+        // バックグラウンド中に取りこぼした状態メッセージ(ミュート等)を復帰時に再同期する。
+        // broadcast()はconn.open前の接続をスキップするため、一発勝負の状態通知は
+        // タイミング次第で永遠に欠落しうる(実機でiPadのミュートアイコン欠落として顕在化)
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState !== 'visible') return;
+            if (!this.peer || this.isLeaving || this.connections.size === 0) return;
+            const now = Date.now();
+            if (this._lastSyncRequest && now - this._lastSyncRequest < 2000) return; // 連発抑止
+            this._lastSyncRequest = now;
+            this.broadcast({ type: 'state-sync-request' });
+        });
     }
 
     // 小画面(iPhone等)でトリガーボタンが画面端に近いと中央揃えのパネル(left:transform(-50%))が
@@ -994,12 +1006,7 @@ class ComChat {
         });
 
         conn.on('open', () => {
-            conn.send({ type: 'user-join', username: this.username });
-            conn.send({ type: 'mute-state', muted: this.isAudioMuted });
-            const cameraEnabled = this.localStream?.getVideoTracks()[0]?.enabled ?? true;
-            conn.send({ type: 'camera-state', enabled: cameraEnabled });
-            conn.send({ type: 'hand-state', raised: this.isHandRaised });
-            if (this.isRecording) conn.send({ type: 'recording-state', recording: true });
+            this.sendStatesTo(conn);
             if (this.currentScreenStream) {
                 conn.send({ type: 'screen-share-start', peerId: this.peer.id, username: this.username });
             }
@@ -1047,6 +1054,19 @@ class ComChat {
             if (!this.peer) return; // hangup済みなら何もしない
             this.updateRoomInfo();
         });
+    }
+
+    // 現在の自分の状態(ユーザー名・ミュート・カメラ・挙手・録音中)を指定接続へ送る。
+    // 新規接続確立時と、復帰ピアからのstate-sync-request応答時の双方から使う。
+    // screen-share-startとpeer-listはここに含めない(再同期で送ると後勝ち逆転や
+    // 不要な再ダイヤルのリスクがあるため。この2つは既存の修復経路が別にある)
+    sendStatesTo(conn) {
+        conn.send({ type: 'user-join', username: this.username });
+        conn.send({ type: 'mute-state', muted: this.isAudioMuted });
+        const cameraEnabled = this.localStream?.getVideoTracks()[0]?.enabled ?? true;
+        conn.send({ type: 'camera-state', enabled: cameraEnabled });
+        conn.send({ type: 'hand-state', raised: this.isHandRaised });
+        if (this.isRecording) conn.send({ type: 'recording-state', recording: true });
     }
 
     handleIncomingCall(call) {
@@ -1167,6 +1187,14 @@ class ComChat {
             case 'mute-state':
                 this.muteStates.set(senderId, data.muted);
                 this.setMuteIndicator(senderId, data.muted);
+                break;
+            case 'state-sync-request':
+                // フォアグラウンド復帰したピアからの再同期要求。自分の現在状態を送り返す
+                if (!this._allowMessage(senderId)) break; // 連投フラッディング対策
+                {
+                    const conn = this.connections.get(senderId);
+                    if (conn && conn.open) this.sendStatesTo(conn);
+                }
                 break;
             case 'reaction':
                 if (!this._allowMessage(senderId)) break; // 連打フラッディング対策
@@ -1360,6 +1388,8 @@ class ComChat {
         const videoContainer = document.createElement('div');
         videoContainer.className = 'video-container';
         videoContainer.id = `video-${id}`;
+        // 視聴中の共有者のタイルは大画面と同内容のため隠す(音声はこのvideoから出続ける)
+        if (id === this.currentRemoteSharerId) videoContainer.classList.add('sharer-tile');
 
         const video = document.createElement('video');
         video.className = 'video-element';
@@ -1903,6 +1933,13 @@ class ComChat {
         if (this.currentScreenStream) this.stopScreenShare();
         this.currentRemoteSharerId = sharerPeerId;
 
+        // 共有者交代(後勝ち)時: 旧共有者のタイルを再表示し、新共有者のタイルを隠す
+        document.querySelectorAll('.video-container.sharer-tile').forEach(el => {
+            if (el.id !== `video-${sharerPeerId}`) el.classList.remove('sharer-tile');
+        });
+        const sharerTile = document.getElementById(`video-${sharerPeerId}`);
+        if (sharerTile) sharerTile.classList.add('sharer-tile');
+
         // Audio plays from the sharer's grid thumbnail; mute here to avoid double playback.
         this.screenShareVideo.muted = true;
 
@@ -1941,6 +1978,7 @@ class ComChat {
             this.screenShareContainer.classList.add('hidden');
             this.callMain.classList.remove('presenter-mode');
             this.shareViewerLabel.classList.add('hidden');
+            document.querySelectorAll('.video-container.sharer-tile').forEach(el => el.classList.remove('sharer-tile'));
             this.relayoutVideoGrid();
         };
         if (v.webkitPresentationMode === 'picture-in-picture' && v.webkitSetPresentationMode) {
