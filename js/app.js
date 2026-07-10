@@ -2369,6 +2369,11 @@ class ComChat {
             const names = Array.from(this.recordingStates.keys())
                 .map(id => this.usernames.get(id) || 'ユーザー');
             parts.push(`🔴 ${names.join('、')}さんが録音中`);
+        } else {
+            // リモートの録音者がゼロになったら、未タップの録音参加確認トーストも撤去する。
+            // ここは録音停止・録音者の退場・自分のhangupの全経路で必ず呼ばれる合流点なので、
+            // 「録音していないのに録音中と出続ける」残留をこの1箇所で防げる
+            document.querySelectorAll('.recording-join-toast').forEach(t => t.remove());
         }
         if (parts.length === 0) {
             this.recordingIndicator.classList.add('hidden');
@@ -3019,10 +3024,11 @@ class ComChat {
         // Step 1: pre-render background effect to blurCanvas
         if (this.bgFilterType === 'blur') {
             if (this._useCtxFilterBlur) {
-                // True Gaussian blur via ctx.filter — no block artifacts.
-                // Draw 30px beyond canvas edges to prevent edge-darkening from blur cutoff.
-                const b = 110;
-                this.blurCtx.filter = 'blur(100px)';
+                // Zoom相当の穏やかなぼかし。固定pxだと解像度で見えが変わるため高さに比例させる
+                // (480p→14px・720p→22px)。はみ出し描画マージンは半径+10pxで縁の暗化を防ぐには十分
+                const blurPx = Math.max(10, Math.round(h * 0.03));
+                const b = blurPx + 10;
+                this.blurCtx.filter = `blur(${blurPx}px)`;
                 this.blurCtx.drawImage(sourceImage, -b, -b, w + 2 * b, h + 2 * b);
                 this.blurCtx.filter = 'none';
             } else {
@@ -3857,7 +3863,9 @@ class ComChat {
             this.statusDiv.textContent = message;
             this.statusDiv.className = `status ${type}`;
         }
-        document.querySelectorAll('.toast').forEach(t => t.remove());
+        // 録音参加確認トースト(recording-join-toast)はOKタップでのみ消える持続型なので、
+        // 通常トーストの巻き添えで消えないよう除外する
+        document.querySelectorAll('.toast:not(.recording-join-toast)').forEach(t => t.remove());
         const toast = document.createElement('div');
         toast.className = `toast toast-${type}`;
         toast.textContent = message;

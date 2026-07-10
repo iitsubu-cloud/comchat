@@ -940,6 +940,9 @@ body {
 /* 録音中の部屋への途中参加を知らせる確認トースト。通常の.toastと違い自動で消えず、
    OKタップ操作を受け付けるためpointer-eventsを有効化しtoastOutアニメーションを外す */
 .recording-join-toast {
+    /* 通常の.toast(top:50px)や録音中ピル#recording-indicator(top:8px)と
+       同時に表示されても重ならないよう縦位置をずらす */
+    top: 94px;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -1907,14 +1910,14 @@ body {
     cursor: default;
 }
 
-/* 他ピアの編集中インジケーター(右寄せ・小さめグレー。普段は空) */
+/* 他ピアの編集中インジケーター(右寄せ・小さめグレー。普段は空)。
+   3秒で自動消滅する一時表示なので、折り返しでツールバーの高さが多少変わっても許容する */
 .memo-editing-indicator {
     margin-left: auto;
     min-width: 0;
     font-size: 0.78em;
     color: #6b7280;
     text-align: right;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: normal;
+    line-height: 1.35;
 }
