@@ -1032,7 +1032,7 @@ class ComChat {
         });
 
         conn.on('open', () => {
-            this.sendStatesTo(conn);
+            this.sendStatesTo(conn, { newJoin: true });
             if (this.currentScreenStream) {
                 conn.send({ type: 'screen-share-start', peerId: this.peer.id, username: this.username });
             }
@@ -1086,13 +1086,15 @@ class ComChat {
     // 新規接続確立時と、復帰ピアからのstate-sync-request応答時の双方から使う。
     // screen-share-startとpeer-listはここに含めない(再同期で送ると後勝ち逆転や
     // 不要な再ダイヤルのリスクがあるため。この2つは既存の修復経路が別にある)
-    sendStatesTo(conn) {
+    sendStatesTo(conn, { newJoin = false } = {}) {
         conn.send({ type: 'user-join', username: this.username });
         conn.send({ type: 'mute-state', muted: this.isAudioMuted });
         const cameraEnabled = this.localStream?.getVideoTracks()[0]?.enabled ?? true;
         conn.send({ type: 'camera-state', enabled: cameraEnabled });
         conn.send({ type: 'hand-state', raised: this.isHandRaised });
-        if (this.isRecording) conn.send({ type: 'recording-state', recording: true });
+        // newJoinの時だけjoinフラグを付け、受信側で「録音中の部屋への途中参加」と
+        // 「フォアグラウンド復帰時の通常の再同期」を区別できるようにする
+        if (this.isRecording) conn.send({ type: 'recording-state', recording: true, join: newJoin });
         // 共有メモの現在内容も送る(後入り・復帰ピアが同じメモを見られるように)。
         // 受信側の後勝ち判定(rev)により、古い内容が新しい内容を巻き戻すことはない
         if (this.memoText) conn.send({ type: 'memo-update', rev: this.memoRev, text: this.memoText });
@@ -1250,7 +1252,13 @@ class ComChat {
                 this.updateRecordingIndicator();
                 // 送信者名は自己申告(data.username)ではなく真正な名簿から解決する(なりすまし防止)
                 const name = this.usernames.get(senderId) || 'ユーザー';
-                this.showStatus(rec ? `${name}さんが録音を開始しました` : `${name}さんが録音を終了しました`, rec ? 'error' : 'connected');
+                // 録音中の部屋への途中参加は、常時点滅ピル(受動的)だけだと見落とされうるため、
+                // 参加した瞬間だけ気づける一度きりの確認トースト(OKタップで消える)を出す
+                if (rec && data.join) {
+                    this.showRecordingJoinNotice(name);
+                } else {
+                    this.showStatus(rec ? `${name}さんが録音を開始しました` : `${name}さんが録音を終了しました`, rec ? 'error' : 'connected');
+                }
                 break;
             }
             case 'camera-state': {
@@ -1294,7 +1302,7 @@ class ComChat {
                 if (!this._allowMessage(senderId)) break; // 連投フラッディング対策
                 // 編集者名は自己申告(data.username)ではなく真正な名簿から解決する(なりすまし防止)
                 const name = this.usernames.get(senderId) || 'ユーザー';
-                this.memoEditingIndicator.textContent = `${name}さんが編集中…`;
+                this.memoEditingIndicator.textContent = `${name}さんが編集中…（後から書き終えた方が反映されます）`;
                 clearTimeout(this._memoEditingTimer);
                 this._memoEditingTimer = setTimeout(() => { this.memoEditingIndicator.textContent = ''; }, 3000);
                 break;
@@ -1405,7 +1413,7 @@ class ComChat {
         this.roomLockBtn.classList.toggle('active', this.roomLocked);
         this.roomLockBtn.title = this.roomLocked ? 'ルームのロックを解除' : 'ルームをロック';
         this.roomLockLabel.textContent = this.roomLocked ? 'ロック中（タップで解除）' : 'ルームをロック';
-        this.showStatus(this.roomLocked ? 'ルームをロックしました（新規参加を拒否）' : 'ルームのロックを解除しました', 'connected');
+        this.showStatus(this.roomLocked ? 'ルームをロックしました（新規参加を拒否・今の参加者はそのまま）' : 'ルームのロックを解除しました', 'connected');
     }
 
     startEditUsername() {
@@ -2028,6 +2036,14 @@ class ComChat {
                 video: true,
                 audio: true
             });
+
+            // 開示したまま画面共有を始めると室名IDが映り込むため、共有が確立した瞬間に
+            // 強制的に伏字へ戻す(タイマー式ではなく、危険な瞬間にだけピンポイントで効く方式。
+            // 会話中はいつまでも開示したままで良い)
+            if (this.roomIdRevealed) {
+                this.roomIdRevealed = false;
+                this.renderRoomIdDisplay();
+            }
 
             const screenVideoTrack = screenStream.getVideoTracks()[0];
             const cameraVideoTrack = this.localStream.getVideoTracks()[0];
@@ -3847,6 +3863,23 @@ class ComChat {
         toast.textContent = message;
         document.body.appendChild(toast);
         setTimeout(() => toast.remove(), 3000);
+    }
+
+    // 録音中の部屋に途中参加した瞬間だけ出す確認トースト。通常のshowStatusと違い
+    // 自動では消えず、OKタップでのみ消える(その場で気づいてもらうための能動的な一度きりの通知)
+    showRecordingJoinNotice(name) {
+        document.querySelectorAll('.recording-join-toast').forEach(t => t.remove());
+        const toast = document.createElement('div');
+        toast.className = 'toast recording-join-toast';
+        const text = document.createElement('span');
+        text.textContent = `${name}さんがこの通話を録音中です`;
+        const okBtn = document.createElement('button');
+        okBtn.type = 'button';
+        okBtn.className = 'recording-join-toast-ok';
+        okBtn.textContent = 'OK';
+        okBtn.addEventListener('click', () => toast.remove());
+        toast.append(text, okBtn);
+        document.body.appendChild(toast);
     }
 
     async copyRoomId() {

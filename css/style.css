@@ -937,6 +937,30 @@ body {
     to   { opacity: 0; }
 }
 
+/* 録音中の部屋への途中参加を知らせる確認トースト。通常の.toastと違い自動で消えず、
+   OKタップ操作を受け付けるためpointer-eventsを有効化しtoastOutアニメーションを外す */
+.recording-join-toast {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    pointer-events: auto;
+    background: rgba(220, 38, 38, 0.95);
+    color: white;
+    animation: toastIn 0.3s ease;
+}
+
+.recording-join-toast-ok {
+    flex-shrink: 0;
+    padding: 4px 14px;
+    border: none;
+    border-radius: 999px;
+    background: white;
+    color: #dc2626;
+    font-weight: 600;
+    font-size: 0.85em;
+    cursor: pointer;
+}
+
 /* 背景フィルターパネル */
 .filter-panel {
     position: fixed;
