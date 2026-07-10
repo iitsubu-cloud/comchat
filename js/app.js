@@ -79,6 +79,12 @@ class ComChat {
         this._memoDebounceTimer = null;  // 入力デバウンス(800ms)で全文送信の頻度を抑える
         this._memoEditingTimer = null;   // 「◯◯さんが編集中…」表示の消去タイマー
         this._memoEditingSignalAt = 0;   // 自分のmemo-editing送信スロットル(2秒)
+        // 単一編集者ロック: 編集中は他の人のメモ欄を読み取り専用にして混線(全文後勝ち置換による
+        // カーソル飛び・文章破壊)を根治する
+        this.memoLockHolder = null;      // 共有メモを編集中のリモートpeerId(自分の編集はここに入れない)
+        this._memoLockStaleTimer = null; // ロック更新(memo-editing)が5秒途絶えたら自動解除
+        this._memoUnlockTimer = null;    // 自分の入力が3秒止まったらmemo-unlockを送る
+        this._memoSnapshotTakenForLock = false; // ロックセッション毎に1回だけスナップショットを積むためのフラグ
         // リアクション/挙手
         this.handStates = new Map();
         this.isHandRaised = false;
@@ -252,6 +258,13 @@ class ComChat {
         this.chatTabBtn.addEventListener('click', () => this.switchChatTab('chat'));
         this.memoTabBtn.addEventListener('click', () => this.switchChatTab('memo'));
         this.memoTextarea.addEventListener('input', () => this.onMemoInput());
+        // フォーカスが外れたら編集終了とみなし即座にロックを解放する(3秒待ちの解除タイマーも兼ねてclear)。
+        // 編集していない時のblur(眺めるだけでタップした等)では余計なunlockを流さない
+        this.memoTextarea.addEventListener('blur', () => {
+            if (!this._memoUnlockTimer && !this.memoDirty) return;
+            clearTimeout(this._memoUnlockTimer);
+            this._releaseMemoLock();
+        });
         this.memoUndoBtn.addEventListener('click', () => this.undoMemo());
         this.memoDownloadBtn.addEventListener('click', () => this.downloadMemo());
 
@@ -1021,6 +1034,7 @@ class ComChat {
             if (this.currentRemoteSharerId === conn.peer) {
                 this.exitRemotePresenterMode();
             }
+            if (this.memoLockHolder === conn.peer) this._clearMemoLock(); // 退室時にロックが残らないようにする
             for (const [id, transfer] of this.receivingFiles.entries()) {
                 if (transfer.senderId === conn.peer) {
                     transfer.progress.statusEl.textContent = '転送中断';
@@ -1069,6 +1083,7 @@ class ComChat {
             if (this.currentRemoteSharerId === conn.peer) {
                 this.exitRemotePresenterMode();
             }
+            if (this.memoLockHolder === conn.peer) this._clearMemoLock(); // 退室時にロックが残らないようにする
             // Clean up any pending file transfers from this peer
             for (const [id, transfer] of this.receivingFiles.entries()) {
                 if (transfer.senderId === conn.peer) {
@@ -1292,7 +1307,10 @@ class ComChat {
                 this.memoRev = rev; // 自分が次に編集する時はこれより大きいrevで勝てる
                 if (this.memoDirty) break; // 自分の入力中は上書きしない(直後の自分の送信が後勝ちで反映される)
                 if (text === this.memoText) break;
-                this._pushMemoSnapshot(this.memoText); // 上書き前の内容を「戻す」履歴へ
+                // ロックシグナル(memo-editing)が先行していれば、ロックセッション開始時点で
+                // 既にスナップショットを積んである。ロック無しで届く更新(入室時のsendStatesTo同期等)の
+                // 場合だけここで積む
+                if (!this._memoSnapshotTakenForLock) this._pushMemoSnapshot(this.memoText); // 上書き前の内容を「戻す」履歴へ
                 this.memoText = text;
                 this.memoTextarea.value = text;
                 this._showMemoDotIfHidden(); // メモタブ非表示中なら更新ドットで知らせる
@@ -1300,11 +1318,34 @@ class ComChat {
             }
             case 'memo-editing': {
                 if (!this._allowMessage(senderId)) break; // 連投フラッディング対策
+                // 自分も編集中(未送信分あり、または解除タイマーが生きている)なら同時要求が衝突している。
+                // 既存の後勝ち規約と同じsenderId比較で決定的に譲り合う(双方が同じ判定をするので一致する)
+                const iAmEditing = this.memoDirty || this._memoUnlockTimer !== null;
+                if (iAmEditing) {
+                    if (!(senderId > this.peer.id)) break; // 自分が勝つ側なら相手のロック要求は無視
+                    // 相手に譲る: 自分の未送信分は破棄せずそのまま(直後のロックで入力だけ止まる)
+                }
                 // 編集者名は自己申告(data.username)ではなく真正な名簿から解決する(なりすまし防止)
                 const name = this.usernames.get(senderId) || 'ユーザー';
-                this.memoEditingIndicator.textContent = `${name}さんが編集中…（後から書き終えた方が反映されます）`;
-                clearTimeout(this._memoEditingTimer);
-                this._memoEditingTimer = setTimeout(() => { this.memoEditingIndicator.textContent = ''; }, 3000);
+                if (this.memoLockHolder === null) {
+                    // ロックセッションの開始: 「この人の編集が始まる前」の内容を「戻す」履歴に確保するのは
+                    // ここで1回だけ(memo-editingが2秒毎に届くたびに積むと履歴が溢れるため)
+                    this._pushMemoSnapshot(this.memoText);
+                    this._memoSnapshotTakenForLock = true;
+                }
+                this.memoLockHolder = senderId;
+                this.memoTextarea.readOnly = true;
+                this.memoEditingIndicator.textContent = `${name}さんが編集中…（終わると入力できます）`;
+                this._updateMemoUndoBtn();
+                clearTimeout(this._memoLockStaleTimer);
+                // 送信側は入力中2秒毎にmemo-editingを送り続けるので、5秒あればパケット1回分の
+                // 紛失も吸収できる(memo-unlockの取りこぼし対策)
+                this._memoLockStaleTimer = setTimeout(() => this._clearMemoLock(), 5000);
+                break;
+            }
+            case 'memo-unlock': {
+                if (!this._allowMessage(senderId)) break; // 連投フラッディング対策
+                if (senderId === this.memoLockHolder) this._clearMemoLock();
                 break;
             }
             case 'file-meta': {
@@ -1380,6 +1421,7 @@ class ComChat {
         if (this.currentRemoteSharerId === peerId) {
             this.exitRemotePresenterMode();
         }
+        if (this.memoLockHolder === peerId) this._clearMemoLock(); // 退室時にロックが残らないようにする
         for (const [id, transfer] of this.receivingFiles.entries()) {
             if (transfer.senderId === peerId) {
                 transfer.progress.statusEl.textContent = '転送中断';
@@ -1697,12 +1739,46 @@ class ComChat {
     onMemoInput() {
         this.memoDirty = true;
         const now = Date.now();
+        // memo-editingの2秒スロットル送信がロックの要求＋更新を兼ねる(専用の要求メッセージは不要)
         if (now - this._memoEditingSignalAt >= 2000) {
             this._memoEditingSignalAt = now;
             this.broadcast({ type: 'memo-editing' });
         }
+        // 入力が3秒止まったら自分のロックを解放する
+        clearTimeout(this._memoUnlockTimer);
+        this._memoUnlockTimer = setTimeout(() => this._releaseMemoLock(), 3000);
         clearTimeout(this._memoDebounceTimer);
         this._memoDebounceTimer = setTimeout(() => this._flushMemoUpdate(), 800);
+    }
+
+    // 自分の編集終了をピアに伝え、ロックを解放させる
+    _releaseMemoLock() {
+        this._memoUnlockTimer = null;
+        // 解除を伝える前に未送信分を必ず確定させる。unlockが先に届くと、解除を見て
+        // 書き始めた他の人の編集と自分の最終テキストがすれ違い、境目で混線が再発するため
+        // (3秒の自動解除はデバウンス800msより必ず後だが、blur経由はこの順序が逆転しうる)
+        if (this._memoDebounceTimer) {
+            clearTimeout(this._memoDebounceTimer);
+            this._flushMemoUpdate();
+        }
+        if (this.connections.size > 0) this.broadcast({ type: 'memo-unlock' });
+    }
+
+    // リモートのロックを解除する(明示的なmemo-unlock受信・staleタイマー満了・ロック保持者の退室で呼ばれる)
+    _clearMemoLock() {
+        this.memoLockHolder = null;
+        this.memoTextarea.readOnly = false;
+        this.memoEditingIndicator.textContent = '';
+        clearTimeout(this._memoLockStaleTimer);
+        this._memoLockStaleTimer = null;
+        this._memoSnapshotTakenForLock = false;
+        // 変更ゼロで終わったロックセッション(触っただけ等)のスナップショットは現在文と
+        // 同一で「戻す」1回分が空振りになるだけなので、ここで掃除する
+        if (this.memoSnapshots.length > 0 &&
+            this.memoSnapshots[this.memoSnapshots.length - 1] === this.memoText) {
+            this.memoSnapshots.pop();
+        }
+        this._updateMemoUndoBtn();
     }
 
     // デバウンス確定: revを進めて全文をbroadcastする(受信側は後勝ちで適用)
@@ -1711,7 +1787,8 @@ class ComChat {
         const text = this.memoTextarea.value.slice(0, 20000);
         this.memoDirty = false;
         if (text === this.memoText) return;
-        this._pushMemoSnapshot(this.memoText); // 送信前の旧内容を「戻す」履歴へ
+        // 自分の編集の途中経過をここで積むと10件リングがすぐ溢れ「他人に上書きされる前」が
+        // 消えてしまうため、送信前スナップショットは取らない(自分の入力ミスはOSのundoで戻せる)
         this.memoRev++;
         this.memoText = text;
         this.broadcast({ type: 'memo-update', rev: this.memoRev, text: this.memoText });
@@ -1726,11 +1803,13 @@ class ComChat {
     }
 
     _updateMemoUndoBtn() {
-        this.memoUndoBtn.disabled = this.memoSnapshots.length === 0;
+        // 他人の編集中に「戻す」でrev++上書きすると相手の編集を破壊するため無効化する
+        this.memoUndoBtn.disabled = this.memoSnapshots.length === 0 || this.memoLockHolder !== null;
     }
 
     // 「戻す」: 履歴の直前テキストへ戻し、新しい編集としてrevを進めて全員へ伝搬する
     undoMemo() {
+        if (this.memoLockHolder) return; // 他人が編集中は「戻す」を禁止
         if (this.memoSnapshots.length === 0) return;
         const text = this.memoSnapshots.pop();
         this._updateMemoUndoBtn();
@@ -3778,6 +3857,7 @@ class ComChat {
         this.memoRev = 0;
         this.memoDirty = false;
         this.memoSnapshots = [];
+        this._clearMemoLock();
         this._updateMemoUndoBtn();
         this.memoTextarea.value = '';
         clearTimeout(this._memoDebounceTimer);
@@ -3785,6 +3865,8 @@ class ComChat {
         clearTimeout(this._memoEditingTimer);
         this._memoEditingTimer = null;
         this._memoEditingSignalAt = 0;
+        clearTimeout(this._memoUnlockTimer); // broadcastは不要(既存のpeer-leaving/切断検知で受信側の退場処理が動く)
+        this._memoUnlockTimer = null;
         this.memoEditingIndicator.textContent = '';
         this.memoDot.classList.add('hidden');
         this.switchChatTab('chat');
@@ -3887,7 +3969,7 @@ class ComChat {
         okBtn.textContent = 'OK';
         okBtn.addEventListener('click', () => toast.remove());
         toast.append(text, okBtn);
-        document.body.appendChild(toast);
+        (this.callMain || document.body).appendChild(toast);
     }
 
     async copyRoomId() {

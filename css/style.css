@@ -1281,6 +1281,34 @@ body {
     50% { opacity: 0.55; }
 }
 
+/* ワイド画面(Mac/iPad)では録音表示を映像エリア右上に寄せる(上部中央は目障りという実機フィードバック)。
+   iPhone(768px以下)は現状の画面上部中央fixedのまま */
+@media (min-width: 769px) {
+    .call-main { position: relative; } /* 録音表示のabsolute配置基準 */
+    #recording-indicator {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        left: auto;
+        transform: none;
+        max-width: 70%;
+    }
+    .recording-join-toast {
+        position: absolute;
+        top: 40px; /* ピル(top:8px・高さ約26px)の直下 */
+        right: 8px;
+        left: auto;
+        transform: none;
+        max-width: 70%;
+        /* 基底.toastのtoastInはtranslateX(-50%)を含み右寄せ配置では位置が飛ぶため専用のフェードに差し替え */
+        animation: toast-in-right 0.3s ease;
+    }
+}
+@keyframes toast-in-right {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: none; }
+}
+
 /* 個々のリアクション: 絵文字+送信者名タグを縦に積んだコンテナ。
    画面下部(コントロールバーの上、100〜120px)から画面上部まで上昇する。 */
 .reaction-overlay-item {
@@ -1883,6 +1911,13 @@ body {
 
 .memo-textarea:focus {
     border-color: #0891b2;
+}
+
+/* 他の人が編集中(単一編集者ロック)の間は読み取り専用。閲覧・コピーは可能 */
+.memo-textarea[readonly] {
+    background: #f3f4f6;
+    color: #4b5563;
+    cursor: not-allowed;
 }
 
 /* 下部ツールバー(.chat-input-containerと同等の高さ・padding感) */
