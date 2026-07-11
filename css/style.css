@@ -40,6 +40,15 @@ body {
     font-weight: bold;
 }
 
+/* ロゴ右の控えめなバージョン表示。ヘッダーはティール地に白文字のためcolorはinheritに任せる */
+.logo-version {
+    font-size: 0.62em;
+    font-weight: 500;
+    opacity: 0.75;
+    margin-left: 2px;
+    vertical-align: middle;
+}
+
 /* 通話中はヘッダーを圧縮して映像領域を広げる(ヘッダーはグリッド外なので低リスク)。
    in-callクラスはJS(showCallScreen/showWelcomeScreen)が付け外しする */
 .container.in-call .header {
@@ -77,6 +86,20 @@ body {
     text-align: center;
     background: radial-gradient(ellipse at 50% 20%, #ffffff 0%, #e9e4da 100%);
     gap: 44px;
+    position: relative; /* welcome-copyrightのabsolute配置基準 */
+}
+
+/* 最下部の控えめなコピーライト。flexアイテムとして加えるとmargin-top:autoが
+   justify-content:centerの中央寄せを崩し(hero-content/hero-formが上に寄る)実機確認で
+   分かったため、レイアウトに影響しないabsolute配置でpadding-bottom分の余白に収める */
+.welcome-copyright {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 16px;
+    font-size: 0.75em;
+    color: #999;
+    text-align: center;
 }
 
 .hero-content {
@@ -1271,9 +1294,15 @@ body {
     max-width: 90vw;
     overflow: hidden;
     text-overflow: ellipsis;
-    /* 内容の先頭「🔴」ごと、ピル全体をゆっくり点滅させて録音中を目立たせる
-       (textContentで組み立てるため●だけを個別要素にできず、全体点滅で代用) */
-    animation: recording-dot-blink 1.6s ease-in-out infinite;
+}
+
+/* 🔴だけを個別のspan(.rec-blink-dot)に分離してゆっくり点滅させる(JS側でtextContentではなく
+   createElement/textNodeで組み立てる)。updateRecordingIndicator()は1秒毎に呼び直され
+   spanも毎回作り直されるため、animation-delayを壁時計に同期させて位相を継続させている
+   (詳細はjs/app.jsのupdateRecordingIndicator参照) */
+#recording-indicator .rec-blink-dot {
+    display: inline-block;
+    animation: recording-dot-blink 3s ease-in-out infinite;
 }
 
 @keyframes recording-dot-blink {
@@ -1282,20 +1311,24 @@ body {
 }
 
 /* ワイド画面(Mac/iPad)では録音表示を映像エリア右上に寄せる(上部中央は目障りという実機フィードバック)。
-   iPhone(768px以下)は現状の画面上部中央fixedのまま */
-@media (min-width: 769px) {
-    .call-main { position: relative; } /* 録音表示のabsolute配置基準 */
+   iPhone(767px以下)は現状の画面上部中央fixedのまま。
+   768px(iPad縦のCSS幅ちょうど)は769px基準だと1px届かず中央表示に落ちていたためmin-width:768pxに変更 */
+@media (min-width: 768px) {
+    /* ピル/トーストをヘッダー帯右端にviewport固定(.call-main基準のabsoluteだと映像グリッドの
+       最上部にタイル右上が被っていた実機フィードバックのためfixedに変更)。
+       縦700px以下では通話中ヘッダー自体が非表示になる既存仕様(@media max-height:700px参照)があり、
+       その環境ではピルが映像最上端に軽く重なるが許容する */
     #recording-indicator {
-        position: absolute;
-        top: 8px;
+        position: fixed;
+        top: 4px;
         right: 8px;
         left: auto;
         transform: none;
         max-width: 70%;
     }
     .recording-join-toast {
-        position: absolute;
-        top: 40px; /* ピル(top:8px・高さ約26px)の直下 */
+        position: fixed;
+        top: 36px; /* ピル(top:4px・高さ約26px)の直下 */
         right: 8px;
         left: auto;
         transform: none;

@@ -7,14 +7,14 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Klee+One:wght@400;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/style.css?v=60">
+    <link rel="stylesheet" href="css/style.css?v=61">
     <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>">
 </head>
 <body>
     <div class="container">
         <!-- Header -->
         <div class="header">
-            <div class="logo">ComChat</div>
+            <div class="logo">ComChat <span id="logo-version" class="logo-version"></span></div>
         </div>
 
         <!-- Main Content -->
@@ -44,6 +44,7 @@
                         <button id="confirm-join" type="submit" class="btn btn-secondary" style="margin-top: 10px; width: 100%;">参加する</button>
                     </form>
                 </div>
+                <p class="welcome-copyright">© 2026 iitsubu</p>
             </div>
 
             <!-- Call Screen -->
@@ -379,7 +380,7 @@
 
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
-    <script src="js/app.js?v=119"></script>
+    <script src="js/app.js?v=120"></script>
 
     <script>
         // タブを閉じる/ページ遷移時にリソースだけ解放（UI操作は不要）
@@ -578,6 +579,26 @@
         .hangup-modal-btn.confirm:disabled {
             opacity: 0.5;
             cursor: not-allowed;
+            transform: none;
+        }
+
+        /* ホストが参加者を残したまま退室しようとする場合の強調表示(相談決定事項)。
+           #precall-dialogも.hangup-modal-btn.cancelを共用しているため、.cancelへ直接
+           付けず必ず#hangup-modal.host-leave-warnスコープで書く(precallへの波及禁止)。
+           グロー色はライトモーダル(白地)・ダークモード(#1f2937地、キャンセルは#374151地)の
+           どちらでも視認できるティール系にする */
+        #hangup-modal.host-leave-warn .hangup-modal-btn.cancel {
+            animation: cancel-pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes cancel-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(13, 148, 178, 0); transform: scale(1); }
+            50%      { box-shadow: 0 0 10px 2px rgba(13, 148, 178, 0.6); transform: scale(1.03); }
+        }
+
+        /* 退室ボタンの演出を抑制し、注意を煽らない(hoverのscale(1.04)はindex.html内
+           .hangup-modal-btn.confirm:hoverで既定。詳細度(ID+class4)で確実に上書きする) */
+        #hangup-modal.host-leave-warn .hangup-modal-btn.confirm:hover {
             transform: none;
         }
 

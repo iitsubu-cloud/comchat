@@ -103,6 +103,10 @@ class ComChat {
         this.recStartTime = 0;
         this.recTimerInterval = null;
 
+        // ヘッダーのロゴ右に表示するユーザー向けバージョン。stableタグ付与時に更新し、
+        // 実機確認待ちの間はβを付ける
+        this.APP_VERSION = 'v4.11β';
+
         // コントロールバーの並べ替え(左利き対応・編集モード)
         this.CONTROL_ORDER_STORAGE_KEY = 'comchat-control-order';
         this.DEFAULT_CONTROL_ORDER = ['toggle-video', 'toggle-audio', 'share-screen', 'reaction-btn', 'toggle-chat', 'more-btn', 'hangup'];
@@ -113,6 +117,10 @@ class ComChat {
     }
 
     initializeUI() {
+        // ヘッダーのロゴ右にバージョンを表示
+        const logoVersionEl = document.getElementById('logo-version');
+        if (logoVersionEl) logoVersionEl.textContent = this.APP_VERSION;
+
         this.welcomeScreen = document.getElementById('welcome-screen');
         this.callScreen = document.getElementById('call-screen');
         this.reactionOverlay = document.getElementById('reaction-overlay');
@@ -217,6 +225,8 @@ class ComChat {
         this.hangupModal = document.getElementById('hangup-modal');
         this.hangupConfirmBtn = document.getElementById('hangup-confirm');
         this.hangupCancelBtn = document.getElementById('hangup-cancel');
+        this.hangupModalTitle = this.hangupModal.querySelector('.hangup-modal-title');
+        this.hangupModalDesc = this.hangupModal.querySelector('.hangup-modal-desc');
 
         this.hangupBtn.addEventListener('click', () => this.showHangupModal());
         this.hangupConfirmBtn.addEventListener('click', () => { this.hideHangupModal(); this.hangup(); });
@@ -2448,31 +2458,50 @@ class ComChat {
         return `${m}:${s}`;
     }
 
+    // 🔴だけを個別のspanに分離してCSSアニメーション(recording-dot-blink)を当てるためのヘルパー。
+    // updateRecordingIndicator()はstartRecordingのsetIntervalで1秒毎に呼び直されspanも毎回
+    // 作り直されるため、delayなしでは毎回0%(opacity:1)から再スタートしてしまい一度も暗くならず
+    // 点滅して見えなくなる。Date.now()をアニメーション周期(3000ms)で割った余りを負のdelayとして
+    // 与え壁時計に同期させることで、作り直しをまたいでも点滅の位相が連続するようにする
+    _buildBlinkDot() {
+        const span = document.createElement('span');
+        span.className = 'rec-blink-dot';
+        span.textContent = '🔴';
+        span.style.animationDelay = `-${Date.now() % 3000}ms`;
+        return span;
+    }
+
     // 自分の録音経過時間 + リモートの録音中インジケーターを1箇所にまとめて描画する。
     // 状態変化のたび(開始/停止/ピア増減/1秒毎のタイマー)に呼ぶ。
     updateRecordingIndicator() {
         if (!this.recordingIndicator) return;
-        const parts = [];
+        // 各セグメントは[🔴用span, 残りテキストのtextNode]のノード列。innerHTMLは使わず
+        // createElement/textContentのみで組み立てる(XSS安全性は変更前のtextContent版と同等)
+        const segments = [];
         if (this.isRecording) {
             const elapsed = this._formatRecTime(Date.now() - this.recStartTime);
-            parts.push(`🔴 録音中 ${elapsed}`);
+            segments.push([this._buildBlinkDot(), document.createTextNode(` 録音中 ${elapsed}`)]);
         }
         if (this.recordingStates.size > 0) {
             const names = Array.from(this.recordingStates.keys())
                 .map(id => this.usernames.get(id) || 'ユーザー');
-            parts.push(`🔴 ${names.join('、')}さんが録音中`);
+            segments.push([this._buildBlinkDot(), document.createTextNode(` ${names.join('、')}さんが録音中`)]);
         } else {
             // リモートの録音者がゼロになったら、未タップの録音参加確認トーストも撤去する。
             // ここは録音停止・録音者の退場・自分のhangupの全経路で必ず呼ばれる合流点なので、
             // 「録音していないのに録音中と出続ける」残留をこの1箇所で防げる
             document.querySelectorAll('.recording-join-toast').forEach(t => t.remove());
         }
-        if (parts.length === 0) {
+        if (segments.length === 0) {
             this.recordingIndicator.classList.add('hidden');
             this.recordingIndicator.textContent = '';
             return;
         }
-        this.recordingIndicator.textContent = parts.join('　');
+        this.recordingIndicator.textContent = ''; // 既存ノードをクリア
+        segments.forEach((nodes, i) => {
+            if (i > 0) this.recordingIndicator.appendChild(document.createTextNode('　'));
+            nodes.forEach(n => this.recordingIndicator.appendChild(n));
+        });
         this.recordingIndicator.classList.remove('hidden');
     }
 
@@ -3894,6 +3923,19 @@ class ComChat {
     }
 
     showHangupModal() {
+        // ホストが参加者を残したまま退室しようとしている場合は、全員の通話が終了する旨を
+        // 強調した専用文言・スタイル(host-leave-warn)に切り替える。表示のたびに文言と
+        // クラスを明示的にセット/リセットし、前回表示時の状態が残らないようにする
+        const hostWithGuests = this.isHost && this.connections.size > 0;
+        if (hostWithGuests) {
+            this.hangupModalTitle.textContent = 'あなたはホストです';
+            this.hangupModalDesc.textContent = '退室すると、在室中の参加者全員の通話が終了します';
+            this.hangupModal.classList.add('host-leave-warn');
+        } else {
+            this.hangupModalTitle.textContent = '退室しますか？';
+            this.hangupModalDesc.textContent = 'ルームから退室します';
+            this.hangupModal.classList.remove('host-leave-warn');
+        }
         this.hangupModal.classList.remove('hidden');
         // モーダル表示直後の誤タップ防止：300ms間は確認ボタンを無効化
         this.hangupConfirmBtn.disabled = true;
@@ -3902,6 +3944,7 @@ class ComChat {
 
     hideHangupModal() {
         this.hangupModal.classList.add('hidden');
+        this.hangupModal.classList.remove('host-leave-warn');
         this.hangupConfirmBtn.disabled = false;
     }
 
