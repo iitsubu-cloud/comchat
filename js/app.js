@@ -105,7 +105,7 @@ class ComChat {
 
         // ヘッダーのロゴ右に表示するユーザー向けバージョン。stableタグ付与時に更新し、
         // 実機確認待ちの間はβを付ける
-        this.APP_VERSION = 'v4.12β';
+        this.APP_VERSION = 'v4.13β';
 
         // コントロールバーの並べ替え(左利き対応・編集モード)
         this.CONTROL_ORDER_STORAGE_KEY = 'comchat-control-order';
@@ -441,6 +441,8 @@ class ComChat {
             this.filterPanel.style.bottom = (window.innerHeight - rect.top + 10) + 'px';
             this.filterPanel.style.left = (rect.left + rect.width / 2) + 'px';
             this.filterPanel.classList.remove('hidden');
+            // 通話中のbgFilterBtn経由と同じく、狭い画面でパネルが画面外へはみ出さないよう補正
+            this.clampPanelToViewport(this.filterPanel, rect);
         });
         this.precallConfirmBtn.addEventListener('click', () => this.confirmPreCall());
         this.precallCancelBtn.addEventListener('click', () => this.cancelPreCall());
@@ -951,12 +953,24 @@ class ComChat {
                 try { conn.close(); } catch {}
                 reject(new Error('ルームが見つかりませんでした。ルームIDをご確認ください'));
             }, 10000);
-            // handleConnection も別途 'open' を登録するが(user-join送信等)、複数リスナーは併存可
-            conn.on('open', () => {
+            // openだけでは入室確定にしない。ホストは受理時にopen直後からuser-join等の
+            // 状態を送り、拒否時はroom-full/room-lockedを送ってから閉じるため、最初の
+            // dataメッセージで受理/拒否を判定する(openで即resolveすると、満員・ロック中
+            // でも一瞬通話画面に入ってから蹴り出される紛らわしい挙動になる)。
+            // handleConnection も別途 'data' を登録するが、複数リスナーは併存可
+            conn.on('data', (data) => {
                 if (settled) return;
                 settled = true;
                 clearTimeout(timer);
-                resolve();
+                if (data?.type === 'room-full') {
+                    try { conn.close(); } catch {}
+                    reject(new Error('ルームは満員です（最大6人）'));
+                } else if (data?.type === 'room-locked') {
+                    try { conn.close(); } catch {}
+                    reject(new Error('このルームはロックされています'));
+                } else {
+                    resolve();
+                }
             });
             this.handleConnection(conn);
             // 容量超過等で handleConnection が conn を登録しなかった場合は発信しない
@@ -1027,16 +1041,27 @@ class ComChat {
             });
             return;
         }
-        // Reject duplicate connections from the same peer
+        // Reject duplicate connections from the same peer.
+        // ただし旧接続が'disconnected'で固着している場合(iOS Safari等はICEが
+        // 'failed'へ遷移しないまま残ることがある)、同一ピアIDからの新規接続は
+        // 本人の再接続とみなし、旧接続を掃除して受け入れる
         if (this.connections.has(conn.peer)) {
-            conn.close();
-            return;
+            const st = this.connections.get(conn.peer).peerConnection?.connectionState;
+            if (st === 'disconnected') {
+                this.cleanupPeer(conn.peer);
+            } else {
+                conn.close();
+                return;
+            }
         }
 
         this.connections.set(conn.peer, conn);
 
         conn.on('error', (err) => {
             console.error('Connection error:', err);
+            // 掃除済みの旧接続(同一ピアIDで再接続済み)の遅延イベントが、確立済みの
+            // 新しい接続のエントリを巻き添え削除しないようにする(handleCallのstaleガードと対)
+            if (this.connections.get(conn.peer) !== conn) return;
             // ホストとの接続が切れたらルームは終了(ルームID=ホストのPeer IDなので以後
             // 誰も参加できない死んだルームになる。退室ボタン・タブ閉じ・回線断すべて対象)
             if (!this.isLeaving && !this.isHost && conn.peer === this.roomId) {
@@ -1049,6 +1074,7 @@ class ComChat {
             this.muteStates.delete(conn.peer);
             this.cameraStates.delete(conn.peer);
             this.handStates.delete(conn.peer);
+            this._msgRate.delete(conn.peer);
             this.detachRecordingSource(conn.peer);
             this.removeVideoElement(conn.peer);
             if (this.currentRemoteSharerId === conn.peer) {
@@ -1066,6 +1092,8 @@ class ComChat {
         });
 
         conn.on('open', () => {
+            // hangup後(this.peer=null)や掃除済み旧接続の遅延openでは何もしない
+            if (!this.peer || this.connections.get(conn.peer) !== conn) return;
             this.sendStatesTo(conn, { newJoin: true });
             if (this.currentScreenStream) {
                 conn.send({ type: 'screen-share-start', peerId: this.peer.id, username: this.username });
@@ -1086,6 +1114,9 @@ class ComChat {
         });
 
         conn.on('close', () => {
+            // 掃除済みの旧接続(同一ピアIDで再接続済み)の遅延イベントが、確立済みの
+            // 新しい接続のエントリを巻き添え削除しないようにする(handleCallのstaleガードと対)
+            if (this.connections.get(conn.peer) !== conn) return;
             // ホストとの接続が切れたらルームは終了(ルームID=ホストのPeer IDなので以後
             // 誰も参加できない死んだルームになる。退室ボタン・タブ閉じ・回線断すべて対象)
             if (!this.isLeaving && !this.isHost && conn.peer === this.roomId) {
@@ -1098,6 +1129,7 @@ class ComChat {
             this.muteStates.delete(conn.peer);
             this.cameraStates.delete(conn.peer);
             this.handStates.delete(conn.peer);
+            this._msgRate.delete(conn.peer);
             this.detachRecordingSource(conn.peer);
             this.removeVideoElement(conn.peer);
             if (this.currentRemoteSharerId === conn.peer) {
@@ -1199,14 +1231,24 @@ class ComChat {
     }
 
     handleDataMessage(data, senderId) {
+        // hangup後(this.peer=null)にキュー済みの'data'イベントが遅れて届いた場合は
+        // 何もしない(peer-list/memo-update等がthis.peer.idを参照するためのnull対策)
+        if (!this.peer) return;
         switch (data.type) {
             case 'room-full':
-                this.hangup();
-                this.showStatus('ルームは満員です（最大6人）', 'error');
+                // 参加処理中はconnectToHostのdataリスナーがrejectして入室前に止めるため
+                // ここでは扱わない。入室後については、なりすましキックに使われないよう
+                // ホストID(=ルームID)からのメッセージのみ受理する(room-lockedと同じ作法)
+                if (this.isConnecting) break;
+                if (!this.isLeaving && !this.isHost && senderId === this.roomId) {
+                    this.hangup();
+                    this.showStatus('ルームは満員です（最大6人）', 'error');
+                }
                 break;
             case 'room-locked':
                 // ロックの門番はホスト限定(handleConnectionのisHostガード)なので、正規の
                 // 送信者は必ずホスト。なりすましで退室させられないようホストIDのみ受理する
+                if (this.isConnecting) break; // 参加処理中はconnectToHost側でrejectされる
                 if (!this.isLeaving && !this.isHost && senderId === this.roomId) {
                     this.hangup();
                     this.showStatus('このルームはロックされています', 'error');
@@ -1436,6 +1478,7 @@ class ComChat {
         this.muteStates.delete(peerId);
         this.cameraStates.delete(peerId);
         this.handStates.delete(peerId);
+        this._msgRate.delete(peerId);
         this.detachRecordingSource(peerId);
         this.removeVideoElement(peerId);
         if (this.currentRemoteSharerId === peerId) {
@@ -2126,13 +2169,17 @@ class ComChat {
     }
 
     async shareScreen() {
-        if (this.currentScreenStream) return;
+        // _screenShareStarting: getDisplayMediaの許可ダイアログ待ちの間はcurrentScreenStreamが
+        // まだnullのため、連打で取得処理が二重に走るのを同期フラグで防ぐ(先取得側の
+        // ストリームが上書きで孤立してstopされないリークと、二重broadcastの防止)
+        if (this.currentScreenStream || this._screenShareStarting) return;
         // iPhone/iPad(iOS・iPadOS Safari)はgetDisplayMedia非対応で画面共有を発信できない。
         // 原因不明の「失敗」に見えないよう、対応端末でないことを明示する(視聴は可能)
         if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
             this.showStatus('この端末は画面共有の発信に対応していません（iPhone/iPad等）。PCからお試しください', 'error');
             return;
         }
+        this._screenShareStarting = true;
         try {
             const screenStream = await navigator.mediaDevices.getDisplayMedia({
                 video: true,
@@ -2157,6 +2204,11 @@ class ComChat {
             // (senderId === currentRemoteSharerId)が誤って一致し、
             // 始めたばかりの自分の共有表示を自分で畳んでしまう(後勝ちが成立しない)
             this.currentRemoteSharerId = null;
+            // 視聴していた旧共有者のタイルはsharer-tileで隠されている。旧共有者は
+            // こちらのscreen-share-start受信で自ら共有を止める(後勝ち)ため、隠れた
+            // タイルをここで再表示しないと名前だけの空タイルのまま残留する
+            document.querySelectorAll('.video-container.sharer-tile').forEach(el =>
+                el.classList.remove('sharer-tile'));
 
             // Send screen to remote peers
             this.calls.forEach((call) => {
@@ -2202,6 +2254,8 @@ class ComChat {
             if (error.name !== 'NotAllowedError') {
                 this.showStatus('画面共有に失敗しました', 'error');
             }
+        } finally {
+            this._screenShareStarting = false;
         }
     }
 
@@ -2388,6 +2442,9 @@ class ComChat {
             const AudioCtx = window.AudioContext || window.webkitAudioContext;
             if (!AudioCtx) return null;
             const ctx = new AudioCtx();
+            // 生成直後にthisへ保持する。以降の処理(終了済みトラックへのcreateMediaStreamSource等)が
+            // 例外を投げても、catchのteardownMixedAudioで確実にclose()できるようにするため
+            this.mixAudioContext = ctx;
             const dest = ctx.createMediaStreamDestination();
 
             const micTrack = this.localStream?.getAudioTracks()[0];
@@ -2403,7 +2460,6 @@ class ComChat {
                 this.mixSources.push(screenSource);
             }
 
-            this.mixAudioContext = ctx;
             this.mixedAudioTrack = dest.stream.getAudioTracks()[0];
             return this.mixedAudioTrack;
         } catch {
@@ -3354,6 +3410,7 @@ class ComChat {
             this.bgFilterStream.getTracks().forEach(t => t.stop());
         }
         this.bgFilterStream = null;
+        this._bgFilterCssMode = false;
         // 破綻検知の計測状態をリセット(自動オフ回数/恒久ブロックはセッション維持なので残す)
         this._segFilterStartT = null;
         this._segDegenStart = null;
@@ -3361,6 +3418,7 @@ class ComChat {
     }
 
     async applyBgFilter(type) {
+        const prevType = this.bgFilterType;
         const wasActive = this.bgFilterType !== 'none';
         this.bgFilterType = type;
 
@@ -3417,6 +3475,18 @@ class ComChat {
         }
 
         if (wasActive) {
+            // CSSフォールバック中(MediaPipe不可)は背景画像を描画できない(getCSSFilterに
+            // 'image'はなく素のカメラ映像がそのまま流れる)。「適用済み」と誤認したまま
+            // 生の背景が配信されないよう、選択を受け付けず直前のフィルターへ戻す
+            if (type === 'image' && (!this.bgFilterCanvas || this._bgFilterCssMode)) {
+                this.bgFilterType = prevType;
+                this.filterPanel.querySelectorAll('.filter-option').forEach(el =>
+                    el.classList.toggle('active', el.dataset.filter === prevType));
+                const inPrecall = this.precallDialog && !this.precallDialog.classList.contains('hidden');
+                if (inPrecall) this.showPrecallStatus('この端末では背景画像を使えません');
+                else this.showStatus('この端末では背景画像を使えません', 'error');
+                return;
+            }
             // CSS-only fallback: no canvas, update style.filter directly
             if (!this.bgFilterCanvas) {
                 if (localVideoEl) localVideoEl.style.filter = this.getCSSFilter(type);
@@ -3553,6 +3623,11 @@ class ComChat {
             } catch (mpErr) {
                 console.warn('MediaPipe unavailable, falling back to CSS filter:', mpErr);
                 if (this.imageSegmenter) { this.imageSegmenter.close(); this.imageSegmenter = null; }
+                // CSSフォールバックは背景画像を描画できない(素のカメラ映像が「適用しました」
+                // 表示のまま配信されてしまう)ため、画像タイプは外側catchのエラー処理
+                // (noneへ戻す+エラー表示)へ倒す
+                if (type === 'image') throw mpErr;
+                this._bgFilterCssMode = true;
                 this.startCSSFilterLoop();
             }
 
