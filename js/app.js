@@ -105,7 +105,7 @@ class ComChat {
 
         // コントロールバーの並べ替え(左利き対応・編集モード)
         this.CONTROL_ORDER_STORAGE_KEY = 'comchat-control-order';
-        this.DEFAULT_CONTROL_ORDER = ['toggle-video', 'toggle-audio', 'share-screen', 'reaction-btn', 'toggle-chat', 'hangup', 'more-btn'];
+        this.DEFAULT_CONTROL_ORDER = ['toggle-video', 'toggle-audio', 'share-screen', 'reaction-btn', 'toggle-chat', 'more-btn', 'hangup'];
         this.isReorderMode = false;
         this._reorderDrag = null; // ドラッグ中の状態(item, pointerId, 各種寸法)を保持
 
@@ -493,6 +493,16 @@ class ComChat {
             return null;
         }
         if (!Array.isArray(saved)) return null;
+
+        // 移行措置: 退室ボタンの初期位置を変更したため、旧デフォルト順のまま
+        // (並べ替えモードで何もせず「完了」を押しただけ等、実質未カスタマイズ)の
+        // 保存配列は捨てて新デフォルトへ移す。実際に並び替えたユーザーの保存は
+        // このチェックに一致しないため、そのまま尊重される
+        const OLD_DEFAULT_ORDER = ['toggle-video', 'toggle-audio', 'share-screen', 'reaction-btn', 'toggle-chat', 'hangup', 'more-btn'];
+        if (saved.length === OLD_DEFAULT_ORDER.length && saved.every((id, i) => id === OLD_DEFAULT_ORDER[i])) {
+            localStorage.removeItem(this.CONTROL_ORDER_STORAGE_KEY);
+            return null;
+        }
 
         const existingIds = Array.from(this.controlsEl.querySelectorAll(':scope > .ctrl-item > .control-btn')).map(b => b.id);
         const existingSet = new Set(existingIds);
@@ -1825,7 +1835,10 @@ class ComChat {
     // メモをテキストファイルとしてローカル保存する(録音保存と同じ作法)。空白のみなら何もしない
     downloadMemo() {
         const text = this.memoTextarea ? this.memoTextarea.value : this.memoText;
-        if (!text.trim()) return;
+        // trim()はゼロ幅文字(U+200B〜200D/2060/FEFF)を空白と見なさず落とせないため、
+        // iOSの入力やコピペで混入すると見かけ空のメモが保存されてしまう。ガード判定の
+        // 直前でゼロ幅文字を除去してから空白チェックする(保存する本文自体は変更しない)
+        if (!text.replace(/[\u200B-\u200D\u2060\uFEFF]/g, '').trim()) return;
         const blob = new Blob([text], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
         const now = new Date();
@@ -3896,6 +3909,8 @@ class ComChat {
         this.welcomeScreen.classList.remove('hidden');
         this.callScreen.classList.add('hidden');
         document.querySelector('.container')?.classList.remove('in-call');
+        // body直下(.containerの外)にあるパネル/モーダルのダークモード判定用(style.css参照)
+        document.body.classList.remove('in-call');
         this.roomInfoDiv.classList.add('hidden');
         this.joinGroup.classList.add('hidden');
         this.joinRoomIdInput.value = '';
@@ -3908,6 +3923,8 @@ class ComChat {
         // モバイルの全画面固定レイアウト用。CSSの :has() 判定はSafari 15.4未満等で
         // 無視されるため、クラス切替で全ブラウザに対応する(style.css .container.in-call)
         document.querySelector('.container')?.classList.add('in-call');
+        // body直下(.containerの外)にあるパネル/モーダルのダークモード判定用(style.css参照)
+        document.body.classList.add('in-call');
         // 入室時にページスクロールを先頭へ戻す。参加前にルームID入力欄へフォーカスすると
         // confirmJoinBtnへscrollIntoViewした分のスクロールが残り、通話画面でヘッダーが
         // 画面外(上)へずれる問題があるため。あわせてキーボードも閉じる(iOS)。

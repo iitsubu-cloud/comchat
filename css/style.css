@@ -1956,3 +1956,256 @@ body {
     white-space: normal;
     line-height: 1.35;
 }
+
+/* ===== ルーム画面ダークモード(常時ダーク・トグルなし) =====
+   通話中はJS(showCallScreen/showWelcomeScreen)が.container/bodyに'in-call'を
+   付け外しする。ウェルカム画面・precall-dialogはライトのまま対象外。
+   #precall-dialog / #filter-panel / #more-menu / #reaction-panel / #bg-image-panel /
+   #hangup-modal は body直下(.containerの外)にあるため body.in-call を使う。
+   :has()は旧Safari非対応のため使用しない(既存方針を踏襲)。
+   末尾配置により、クラス2つ以上のセレクタで既存ルール(および同じくbody直下の
+   index.htmlインラインstyleの.hangup-modal-box等)より詳細度で確実に上書きする。 */
+
+/* 基調背景 */
+.container.in-call {
+    background: #111827;
+}
+
+/* チャット欄 */
+.container.in-call .chat-container {
+    background: #1f2937;
+    border-color: #374151;
+}
+
+.container.in-call .chat-messages {
+    background: #1f2937;
+    color: #e5e7eb;
+}
+
+.container.in-call .chat-input-container {
+    border-top-color: #374151;
+}
+
+.container.in-call .chat-input {
+    background: #111827;
+    color: #e5e7eb;
+    border-color: #374151;
+}
+
+.container.in-call .chat-input::placeholder {
+    color: #6b7280;
+}
+
+/* ファイル転送表示 */
+.container.in-call .file-info {
+    background: #1f2937;
+    border-color: #374151;
+}
+
+.container.in-call .file-link {
+    color: #5eead4;
+}
+
+.container.in-call .file-size {
+    color: #9ca3af;
+}
+
+.container.in-call .file-progress-name {
+    color: #e5e7eb;
+}
+
+.container.in-call .file-progress-status {
+    color: #5eead4;
+}
+
+.container.in-call .file-progress-bar-wrap {
+    background: #374151;
+}
+
+/* 共有メモ */
+.container.in-call .memo-view {
+    background: #1f2937;
+}
+
+.container.in-call .memo-textarea {
+    background: #111827;
+    color: #e5e7eb;
+    border-color: #374151;
+}
+
+.container.in-call .memo-textarea::placeholder {
+    color: #6b7280;
+}
+
+/* ロック中(他ピア編集中)のreadOnly状態。cursor:not-allowedは既存のまま維持 */
+.container.in-call .memo-textarea[readonly] {
+    background: #0b1220;
+    color: #6b7280;
+}
+
+.container.in-call .memo-toolbar {
+    border-top-color: #374151;
+}
+
+.container.in-call .memo-editing-indicator {
+    color: #9ca3af;
+}
+
+/* コントロールラベル・ルーム情報 */
+.container.in-call .ctrl-label {
+    color: #9ca3af;
+}
+
+.container.in-call .room-info {
+    background: transparent;
+    color: #9ca3af;
+}
+
+/* 並べ替えツールバー(ヒント文字・ボタン。トースト自体は元々背景を持たないため触れない) */
+.container.in-call .reorder-toolbar-hint {
+    color: #9ca3af;
+}
+
+.container.in-call .reorder-toolbar-btn-secondary {
+    background: #374151;
+    color: #e5e7eb;
+}
+
+.container.in-call .reorder-toolbar-btn-secondary:hover {
+    background: #4b5563;
+}
+
+/* 「その他」メニュー */
+body.in-call .more-menu {
+    background: #1f2937;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+body.in-call .more-menu-item {
+    color: #e5e7eb;
+}
+
+body.in-call .more-menu-item:hover {
+    background: #374151;
+    color: #5eead4;
+}
+
+/* 背景フィルターパネル */
+body.in-call .filter-panel {
+    background: #1f2937;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+body.in-call .filter-option {
+    color: #e5e7eb;
+}
+
+body.in-call .filter-option:hover {
+    background: #374151;
+    color: #5eead4;
+}
+
+/* リアクション/挙手パネル */
+body.in-call .reaction-panel {
+    background: #1f2937;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+body.in-call .reaction-emoji-btn {
+    background: #374151;
+}
+
+body.in-call .reaction-emoji-btn:hover {
+    background: #4b5563;
+}
+
+body.in-call .reaction-panel-divider {
+    background: #374151;
+}
+
+body.in-call .hand-toggle-btn {
+    background: #374151;
+    color: #e5e7eb;
+}
+
+body.in-call .hand-toggle-btn:hover {
+    background: #4b5563;
+    color: #5eead4;
+}
+
+/* 背景画像パネル */
+body.in-call .bg-image-panel {
+    background: #1f2937;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+body.in-call .bg-preset:hover {
+    background: #374151;
+}
+
+body.in-call .bg-preset.active {
+    background: #374151;
+}
+
+body.in-call .bg-preset span {
+    color: #9ca3af;
+}
+
+body.in-call .bg-upload-btn {
+    background: #374151;
+    border-color: #4b5563;
+    color: #5eead4;
+}
+
+body.in-call .bg-upload-btn:hover {
+    background: #4b5563;
+}
+
+body.in-call .bg-history-section {
+    border-top-color: #374151;
+}
+
+body.in-call .bg-history-label {
+    color: #9ca3af;
+}
+
+body.in-call .bg-history-item:hover {
+    background: #374151;
+}
+
+body.in-call .bg-history-item.active {
+    background: #374151;
+}
+
+body.in-call .bg-history-item span {
+    color: #9ca3af;
+}
+
+/* 退室確認モーダル(index.htmlのインラインstyleで定義されたライト配色を上書きする) */
+body.in-call .hangup-modal-box {
+    background: #1f2937;
+}
+
+body.in-call .hangup-modal-title {
+    color: #e5e7eb;
+}
+
+body.in-call .hangup-modal-desc {
+    color: #9ca3af;
+}
+
+body.in-call .hangup-modal-btn.cancel {
+    background: #374151;
+    color: #e5e7eb;
+}
+
+body.in-call .hangup-modal-btn.cancel:hover {
+    background: #4b5563;
+}
+
+/* ルーム情報内の名前編集input(index.htmlインラインstyle定義)。白地のままだと
+   ダーク化したルーム情報の中で浮くため、チャット入力欄と同じ配色に合わせる */
+.container.in-call .username-edit-input {
+    background: #111827;
+    color: #e5e7eb;
+}
