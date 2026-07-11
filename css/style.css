@@ -1305,9 +1305,11 @@ body {
     animation: recording-dot-blink 3s ease-in-out infinite;
 }
 
+/* 谷0.55では「滅」の変化が小さく点滅と分かりにくい(実機フィードバック)。
+   0.12までしっかり消し、45〜55%で谷を保持して「消えた」瞬間を視認しやすくする */
 @keyframes recording-dot-blink {
     0%, 100% { opacity: 1; }
-    50% { opacity: 0.55; }
+    45%, 55% { opacity: 0.12; }
 }
 
 /* ワイド画面(Mac/iPad)では録音表示を映像エリア右上に寄せる(上部中央は目障りという実機フィードバック)。
