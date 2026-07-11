@@ -2458,7 +2458,9 @@ class ComChat {
         return `${m}:${s}`;
     }
 
-    // 🔴だけを個別のspanに分離してCSSアニメーション(recording-dot-blink)を当てるためのヘルパー。
+    // 点滅●だけを個別のspanに分離してCSSアニメーション(recording-dot-blink)を当てるためのヘルパー。
+    // ●は🔴絵文字ではなくCSSの白い円(.rec-blink-dot)で描く。ピル背景が赤のため赤い絵文字では
+    // 消えてもコントラスト差が出ず点滅が視認できなかった(実機フィードバック)。
     // updateRecordingIndicator()はstartRecordingのsetIntervalで1秒毎に呼び直されspanも毎回
     // 作り直されるため、delayなしでは毎回0%(opacity:1)から再スタートしてしまい一度も暗くならず
     // 点滅して見えなくなる。Date.now()をアニメーション周期(3000ms)で割った余りを負のdelayとして
@@ -2466,7 +2468,6 @@ class ComChat {
     _buildBlinkDot() {
         const span = document.createElement('span');
         span.className = 'rec-blink-dot';
-        span.textContent = '🔴';
         span.style.animationDelay = `-${Date.now() % 3000}ms`;
         return span;
     }

@@ -1296,20 +1296,27 @@ body {
     text-overflow: ellipsis;
 }
 
-/* 🔴だけを個別のspan(.rec-blink-dot)に分離してゆっくり点滅させる(JS側でtextContentではなく
-   createElement/textNodeで組み立てる)。updateRecordingIndicator()は1秒毎に呼び直され
-   spanも毎回作り直されるため、animation-delayを壁時計に同期させて位相を継続させている
+/* 点滅●だけを個別のspan(.rec-blink-dot)に分離してゆっくり点滅させる(JS側でtextContentではなく
+   createElement/textNodeで組み立てる)。●は🔴絵文字ではなくCSSの白い円で描く＝ピル背景が赤のため
+   赤い絵文字では消えてもコントラスト差が出ず点滅が視認できなかった(実機フィードバック)。
+   updateRecordingIndicator()は1秒毎に呼び直されspanも毎回作り直されるため、
+   animation-delayを壁時計に同期させて位相を継続させている
    (詳細はjs/app.jsのupdateRecordingIndicator参照) */
 #recording-indicator .rec-blink-dot {
     display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #fff;
+    vertical-align: baseline;
     animation: recording-dot-blink 3s ease-in-out infinite;
 }
 
-/* 谷0.55では「滅」の変化が小さく点滅と分かりにくい(実機フィードバック)。
-   0.12までしっかり消し、45〜55%で谷を保持して「消えた」瞬間を視認しやすくする */
+/* 白い円が赤地の上でしっかり消える(0.1)まで落とし、45〜55%で谷を保持して
+   「消えた」瞬間を視認しやすくする */
 @keyframes recording-dot-blink {
     0%, 100% { opacity: 1; }
-    45%, 55% { opacity: 0.12; }
+    45%, 55% { opacity: 0.1; }
 }
 
 /* ワイド画面(Mac/iPad)では録音表示を映像エリア右上に寄せる(上部中央は目障りという実機フィードバック)。
