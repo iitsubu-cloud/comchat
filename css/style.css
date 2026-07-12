@@ -313,7 +313,29 @@ body {
     border-radius: 5px;
     font-size: 0.9em;
     z-index: 5;
+    /* 品質バー(inline-flex)を名前テキストと縦位置揃えするため */
+    display: inline-flex;
+    align-items: center;
 }
+
+.net-quality {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 2px;
+    margin-left: 6px;
+    vertical-align: baseline;
+}
+.net-quality span {
+    width: 3px;
+    border-radius: 1px;
+    background: rgba(255, 255, 255, 0.3);
+}
+.net-quality span:nth-child(1) { height: 4px; }
+.net-quality span:nth-child(2) { height: 7px; }
+.net-quality span:nth-child(3) { height: 10px; }
+.net-good span { background: #4ade80; }
+.net-fair span:nth-child(-n+2) { background: #facc15; }
+.net-poor span:nth-child(1) { background: #f87171; }
 
 .video-center-name {
     position: absolute;
@@ -682,6 +704,15 @@ body {
     font-size: 0.9em;
     line-height: 1;
     cursor: pointer;
+}
+
+/* チャットログ保存ボタンは閉じるボタンと見た目を共有しつつ、PC/モバイル問わず常に表示する
+   (.chat-close-btnのdisplay:noneをPC側で上書きする必要があるため個別ルールで指定) */
+.chat-download-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 4px;
 }
 
 /* チャットトグルボタン（PC/タブレット/モバイルすべてで表示。PCでは右カラムの開閉に使う） */

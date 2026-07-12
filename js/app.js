@@ -69,9 +69,14 @@ class ComChat {
         this.speakingLoopTimer = null;       // 全員を1本のループで計測するタイマー
         this._speakingResumeHandler = null;
         this._speakingResumeEvent = null;
+        // 入退室サウンド通知用。他の用途(mixAudioContext等)と分離する作法に合わせ専用インスタンスを持つ
+        this.notifyAudioContext = null;
         this.unreadCount = 0;
         this.isChatVisible = true;
         this.chatObserver = null;
+        // チャットログのダウンロード用。表示DOM(#chat-messages)は300件で古い要素から
+        // 削除されるため、保存用に別途全件(上限あり)を保持する
+        this.chatLog = [];
         // 共有メモ(チャットパネル内のタブ)。全文をrev付きで送る後勝ち同期
         // (同revはpeerId辞書順タイブレーク)で全員の内容を揃える
         this.memoText = '';
@@ -112,9 +117,14 @@ class ComChat {
         this.callTimerInterval = null;
         this.callTimerHidden = false; // タップで数字を隠している間はtrue(通話毎に既定はfalse)
 
+        // 接続品質インジケーター(getStatsを3秒間隔でポーリングし、リモートタイルの電波バーに反映)
+        this.qualityTimer = null;
+        this._qualityPrev = new Map(); // peerId -> { lost, received }(区間ロス率算出用の前回値)
+        this._qualityBusy = false;     // getStats待ち中の多重実行を防ぐガード
+
         // ヘッダーのロゴ右に表示するユーザー向けバージョン。stableタグ付与時に更新し、
         // 実機確認待ちの間はβを付ける
-        this.APP_VERSION = 'v4.15β';
+        this.APP_VERSION = 'v4.16β';
 
         // コントロールバーの並べ替え(左利き対応・編集モード)
         this.CONTROL_ORDER_STORAGE_KEY = 'comchat-control-order';
@@ -149,6 +159,7 @@ class ComChat {
         this.chatContainer = document.querySelector('.chat-container');
         this.toggleChatBtn = document.getElementById('toggle-chat');
         this.chatCloseBtn = document.getElementById('chat-close-btn');
+        this.chatDownloadBtn = document.getElementById('chat-download-btn');
         this.chatObserver = new IntersectionObserver((entries) => {
             if (entries[0].isIntersecting) {
                 this.isChatVisible = true;
@@ -314,6 +325,7 @@ class ComChat {
         });
         this.memoUndoBtn.addEventListener('click', () => this.undoMemo());
         this.memoDownloadBtn.addEventListener('click', () => this.downloadMemo());
+        this.chatDownloadBtn.addEventListener('click', () => this.downloadChatLog());
 
         this.fileInput = document.getElementById('file-input');
         this.fileAttachBtn = document.getElementById('file-attach-btn');
@@ -1138,11 +1150,13 @@ class ComChat {
                 this.showStatus('ホストが退出したためルームは終了しました', 'error');
                 return;
             }
+            const leftName = this.usernames.get(conn.peer); // 削除前に名前を確保(退出通知で使う)
             this.connections.delete(conn.peer);
             this.usernames.delete(conn.peer);
             this.muteStates.delete(conn.peer);
             this.cameraStates.delete(conn.peer);
             this.handStates.delete(conn.peer);
+            this._qualityPrev.delete(conn.peer);
             this._msgRate.delete(conn.peer);
             this.detachRecordingSource(conn.peer);
             this.removeVideoElement(conn.peer);
@@ -1158,6 +1172,12 @@ class ComChat {
                 }
             }
             if (this.peer) this.updateRoomInfo();
+            // タブ閉じ・クラッシュ・回線断はpeer-leavingが届かずこの切断検知で退場が確定する
+            // ため、cleanupPeerと同様にここでも退出通知を出す(名簿に居た相手のみ)
+            if (leftName !== undefined && !this.isLeaving && this.callStartTime) {
+                this.playLeaveSound();
+                this.showStatus(`${leftName}さんが退出しました`, 'connected');
+            }
         });
 
         conn.on('open', () => {
@@ -1193,11 +1213,13 @@ class ComChat {
                 this.showStatus('ホストが退出したためルームは終了しました', 'error');
                 return;
             }
+            const leftName = this.usernames.get(conn.peer); // 削除前に名前を確保(退出通知で使う)
             this.connections.delete(conn.peer);
             this.usernames.delete(conn.peer);
             this.muteStates.delete(conn.peer);
             this.cameraStates.delete(conn.peer);
             this.handStates.delete(conn.peer);
+            this._qualityPrev.delete(conn.peer);
             this._msgRate.delete(conn.peer);
             this.detachRecordingSource(conn.peer);
             this.removeVideoElement(conn.peer);
@@ -1215,6 +1237,12 @@ class ComChat {
             }
             if (!this.peer) return; // hangup済みなら何もしない
             this.updateRoomInfo();
+            // タブ閉じ・クラッシュ・回線断はpeer-leavingが届かずこの切断検知で退場が確定する
+            // ため、cleanupPeerと同様にここでも退出通知を出す(名簿に居た相手のみ)
+            if (leftName !== undefined && !this.isLeaving && this.callStartTime) {
+                this.playLeaveSound();
+                this.showStatus(`${leftName}さんが退出しました`, 'connected');
+            }
         });
     }
 
@@ -1344,11 +1372,27 @@ class ComChat {
             case 'user-join': {
                 // 巨大ユーザー名によるDOM肥大対策で50字に切り詰める
                 const uname = String(data.username ?? 'ユーザー').slice(0, 50);
+                // user-joinは新規参加とリネーム(confirmEditUsername)の両方に流用されるため、
+                // 「まだ名簿に居ない」ことをもって新規参加と判定する(isNew)。
+                // さらにcallStartTimeが立つ(=自分の入室完了後)ことも要求することで、
+                // ①メッシュ接続する既存メンバー(peer-listで接続前に事前登録済み=isNewがfalse)
+                // ②ホストからの参加受理シグナル(callStartTimeがまだnullの時点で届く)
+                // を自然に除外し、自分の入室後に本当に新しく入ってきた人でだけ鳴らす
+                const isNew = !this.usernames.has(senderId);
                 this.usernames.set(senderId, uname);
-                const labelDiv = document.querySelector(`#video-${senderId} .video-label`);
-                if (labelDiv) labelDiv.textContent = uname;
+                // .video-label-name だけを書き換える(labelDiv全体だと品質バーspanが消えるため)
+                const labelNameSpan = document.querySelector(`#video-${senderId} .video-label .video-label-name`);
+                if (labelNameSpan) labelNameSpan.textContent = uname;
+                else {
+                    const labelDiv = document.querySelector(`#video-${senderId} .video-label`);
+                    if (labelDiv) labelDiv.textContent = uname;
+                }
                 const centerName = document.querySelector(`#video-${senderId} .video-center-name`);
                 if (centerName) centerName.textContent = uname;
+                if (isNew && this.callStartTime) {
+                    this.playJoinSound();
+                    this.showStatus(`${uname}さんが参加しました`, 'connected');
+                }
                 break;
             }
             case 'peer-list':
@@ -1537,6 +1581,7 @@ class ComChat {
     // 定員判定前のゴースト掃除で使用)。conn/callのcloseで後から届く遅延close/error
     // イベントは、Mapから消えていること(callはidentityガード)により実質no-opになる
     cleanupPeer(peerId) {
+        const leftName = this.usernames.get(peerId); // 削除前に名前を確保(退出通知で使う)
         const conn = this.connections.get(peerId);
         if (conn) { try { conn.close(); } catch (e) {} }
         const call = this.calls.get(peerId);
@@ -1547,6 +1592,7 @@ class ComChat {
         this.muteStates.delete(peerId);
         this.cameraStates.delete(peerId);
         this.handStates.delete(peerId);
+        this._qualityPrev.delete(peerId);
         this._msgRate.delete(peerId);
         this.detachRecordingSource(peerId);
         this.removeVideoElement(peerId);
@@ -1562,6 +1608,11 @@ class ComChat {
             }
         }
         if (this.peer) this.updateRoomInfo();
+        // usernamesに居なかった(幽霊エントリの掃除等)場合や、自分の退室処理中は鳴らさない
+        if (leftName !== undefined && !this.isLeaving && this.callStartTime) {
+            this.playLeaveSound();
+            this.showStatus(`${leftName}さんが退出しました`, 'connected');
+        }
     }
 
     updateRoomInfo() {
@@ -1604,8 +1655,14 @@ class ComChat {
         const newName = this.usernameEditInput.value.trim();
         if (newName && newName !== this.username) {
             this.username = newName;
-            const localLabel = document.querySelector('#video-local .video-label');
-            if (localLabel) localLabel.textContent = newName;
+            // ローカルタイルには品質バーがないため通常はフォールバックで足りるが、
+            // 構造を統一するため .video-label-name を優先して書き換える
+            const localLabelName = document.querySelector('#video-local .video-label .video-label-name');
+            if (localLabelName) localLabelName.textContent = newName;
+            else {
+                const localLabel = document.querySelector('#video-local .video-label');
+                if (localLabel) localLabel.textContent = newName;
+            }
             const localCenterName = document.querySelector('#video-local .video-center-name');
             if (localCenterName) localCenterName.textContent = newName;
             this.broadcast({ type: 'user-join', username: newName });
@@ -1639,7 +1696,19 @@ class ComChat {
 
         const labelDiv = document.createElement('div');
         labelDiv.className = 'video-label';
-        labelDiv.textContent = label;
+        const labelNameSpan = document.createElement('span');
+        labelNameSpan.className = 'video-label-name';
+        labelNameSpan.textContent = label;
+        labelDiv.appendChild(labelNameSpan);
+        // 接続品質バーはリモートのみ(自分の回線をgetStatsで測っても意味がないため)
+        if (id !== 'local') {
+            const qualitySpan = document.createElement('span');
+            qualitySpan.className = 'net-quality net-unknown';
+            qualitySpan.title = '接続品質: 計測中';
+            qualitySpan.setAttribute('aria-label', '接続品質: 計測中');
+            qualitySpan.innerHTML = '<span></span><span></span><span></span>';
+            labelDiv.appendChild(qualitySpan);
+        }
 
         const muteIndicator = document.createElement('div');
         muteIndicator.className = 'mute-indicator hidden';
@@ -1841,11 +1910,19 @@ class ComChat {
             this.chatMessages.removeChild(this.chatMessages.firstElementChild);
         }
         this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+        this._pushChatLog(username, message);
         // パネルが開いていてもメモタブ表示中はチャットが見えていないため未読に加算する
         if (!isOwn && (!this.isChatVisible || this.activeChatTab === 'memo')) {
             this.unreadCount++;
             this.updateUnreadBadge();
         }
+    }
+
+    // ダウンロード用ログへの追加。表示DOM(#chat-messages)は300件で古い要素から削除される
+    // ため、こちらは別枠で保持する(上限2000件・超えたら古い方から捨てる)
+    _pushChatLog(name, text) {
+        this.chatLog.push({ t: Date.now(), name, text });
+        if (this.chatLog.length > 2000) this.chatLog.shift();
     }
 
     updateUnreadBadge() {
@@ -2047,6 +2124,32 @@ class ComChat {
         setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
+    // チャットログをテキストファイルとしてローカル保存する(録音・メモ保存と同じ作法)
+    downloadChatLog() {
+        if (this.chatLog.length === 0) {
+            this.showStatus('チャットの記録はまだありません', 'error');
+            return;
+        }
+        const pad = (n) => String(n).padStart(2, '0');
+        const now = new Date();
+        const header = `ComChat チャットログ（保存: ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}）`;
+        const lines = this.chatLog.map(({ t, name, text }) => {
+            const d = new Date(t);
+            return `[${pad(d.getHours())}:${pad(d.getMinutes())}] ${name}: ${text}`;
+        });
+        const text = [header, '', ...lines].join('\n');
+        const blob = new Blob([text], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `comchat-chat-${stamp}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
     // メモタブが今見えていない(チャットタブ表示中/パネルが閉じている)時だけ更新ドットを出す
     _showMemoDotIfHidden() {
         if (this.activeChatTab === 'memo' && this.isChatCurrentlyOpen()) return;
@@ -2142,6 +2245,7 @@ class ComChat {
         msgDiv.appendChild(fileDiv);
         this.chatMessages.appendChild(msgDiv);
         this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+        this._pushChatLog(username, '【ファイル】' + filename);
         return { fileDiv, statusEl, barInner, label };
     }
 
@@ -2240,6 +2344,98 @@ class ComChat {
     setHandIndicator(id, raised) {
         const indicator = document.querySelector(`#video-${id} .hand-indicator`);
         if (indicator) indicator.classList.toggle('hidden', !raised);
+    }
+
+    // リモート各ピアの接続品質(RTT・パケットロス)をgetStatsから求め、ラベル内の電波バーに
+    // 反映する。3秒毎にshowCallScreenのタイマーから呼ばれる。getStatsは非同期なので、
+    // 呼び出しが重なって同時に走らないよう多重実行だけはガードする(結果の反映自体は
+    // callごとのstaleガードで守られているため、ここでは早期リターンで十分)
+    async updateConnectionQuality() {
+        if (this._qualityBusy) return;
+        this._qualityBusy = true;
+        try {
+            for (const [peerId, call] of this.calls) {
+                const pc = call.peerConnection;
+                if (!pc) { this._setQualityIndicator(peerId, 'unknown'); continue; }
+
+                let stats;
+                try {
+                    stats = await pc.getStats();
+                } catch (e) {
+                    this._setQualityIndicator(peerId, 'unknown');
+                    continue;
+                }
+                // 置き換え済み/切断済みのcallの結果は反映しない(closeと同じstaleガード)
+                if (this.calls.get(peerId) !== call) continue;
+
+                // RTT: selectedCandidatePairIdが取れればそのペアを優先し、無ければ
+                // nominatedかつ疎通済みのcandidate-pairを使う
+                let selectedPairId = null;
+                stats.forEach(report => {
+                    if (report.type === 'transport' && report.selectedCandidatePairId) {
+                        selectedPairId = report.selectedCandidatePairId;
+                    }
+                });
+                let rtt;
+                stats.forEach(report => {
+                    if (report.type !== 'candidate-pair') return;
+                    if (selectedPairId ? report.id === selectedPairId
+                        : (report.nominated && report.state === 'succeeded')) {
+                        if (typeof report.currentRoundTripTime === 'number') rtt = report.currentRoundTripTime;
+                    }
+                });
+
+                // パケットロス率: audio/video両方のinbound-rtpを合算し、前回値との差分(区間)で見る。
+                // 累積値そのままだと通話開始からの平均になり直近の悪化を検知できないため
+                let lostSum = 0, receivedSum = 0, hasInbound = false;
+                stats.forEach(report => {
+                    if (report.type === 'inbound-rtp' && (report.kind === 'audio' || report.kind === 'video')) {
+                        hasInbound = true;
+                        lostSum += report.packetsLost || 0;
+                        receivedSum += report.packetsReceived || 0;
+                    }
+                });
+                let loss;
+                if (hasInbound) {
+                    const prev = this._qualityPrev.get(peerId);
+                    if (prev) {
+                        const dLost = lostSum - prev.lost;
+                        const dReceived = receivedSum - prev.received;
+                        const denom = dLost + dReceived;
+                        loss = denom > 0 ? dLost / denom : 0;
+                    }
+                    this._qualityPrev.set(peerId, { lost: lostSum, received: receivedSum });
+                }
+
+                this._setQualityIndicator(peerId, this._judgeQuality(rtt, loss));
+            }
+        } finally {
+            this._qualityBusy = false;
+        }
+    }
+
+    // rtt(秒)・loss(0〜1の区間ロス率)から3段階を判定する。片方しか取れない場合は
+    // 取れた方だけで見る(取れない方をgood扱いにすると悪化を見逃すため)
+    _judgeQuality(rtt, loss) {
+        if (rtt === undefined && loss === undefined) return 'unknown';
+        if ((rtt !== undefined && rtt > 0.4) || (loss !== undefined && loss > 0.10)) return 'poor';
+        if ((rtt !== undefined && rtt > 0.25) || (loss !== undefined && loss > 0.03)) return 'fair';
+        return 'good';
+    }
+
+    _setQualityIndicator(peerId, level) {
+        const el = document.querySelector(`#video-${peerId} .net-quality`);
+        if (!el) return;
+        el.classList.remove('net-good', 'net-fair', 'net-poor', 'net-unknown');
+        el.classList.add(`net-${level}`);
+        const label = {
+            good: '接続品質: 良好',
+            fair: '接続品質: やや不安定',
+            poor: '接続品質: 不安定',
+            unknown: '接続品質: 計測中',
+        }[level];
+        el.title = label;
+        el.setAttribute('aria-label', label);
     }
 
     // 連打対策で200msスロットル。broadcastは自分に届かないため自分の名前でローカルエコーする。
@@ -2907,6 +3103,66 @@ class ComChat {
             this.registerSpeakingResumeRetry();
         }
         return this.speakingAudioContext;
+    }
+
+    // ===== 入退室サウンド通知 =====
+    // 通知音専用のAudioContextを用意する。画面共有ミックス(mixAudioContext)・録音(recAudioContext)・
+    // 発話解析(speakingAudioContext)とは別インスタンスにする(このプロジェクトの作法: 用途別に分離する)。
+    ensureNotifyAudioContext() {
+        if (this.notifyAudioContext && this.notifyAudioContext.state === 'closed') {
+            this.notifyAudioContext = null;
+        }
+        if (!this.notifyAudioContext) {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) return null;
+            try {
+                this.notifyAudioContext = new AudioCtx();
+            } catch {
+                this.notifyAudioContext = null;
+                return null;
+            }
+        }
+        if (this.notifyAudioContext.state === 'suspended') {
+            this.notifyAudioContext.resume().catch(() => {});
+        }
+        return this.notifyAudioContext;
+    }
+
+    // freqsで指定した周波数を順に短く鳴らす(2音目は1音目の0.10秒後に開始)。
+    // クリックノイズ防止のため、各音はエンベロープ(立ち上がり/立ち下がり)を付けて鳴らす。
+    // 通知音は機能に影響しないため、失敗しても黙ってスキップする。
+    _playNotifyTone(freqs) {
+        try {
+            const ctx = this.ensureNotifyAudioContext();
+            if (!ctx || ctx.state === 'suspended') return;
+            const now = ctx.currentTime;
+            const toneDuration = 0.12;
+            const toneGap = 0.10;
+            freqs.forEach((freq, i) => {
+                const start = now + i * toneGap;
+                const end = start + toneDuration;
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = freq;
+                gain.gain.setValueAtTime(0.0001, start);
+                gain.gain.exponentialRampToValueAtTime(0.06, start + 0.02);
+                gain.gain.exponentialRampToValueAtTime(0.0001, end);
+                osc.connect(gain).connect(ctx.destination);
+                osc.start(start);
+                osc.stop(end);
+            });
+        } catch {}
+    }
+
+    // 入室音: D5→G5(上昇の控えめなチャイム)
+    playJoinSound() {
+        this._playNotifyTone([587, 784]);
+    }
+
+    // 退出音: G5→D5(下降)
+    playLeaveSound() {
+        this._playNotifyTone([784, 587]);
     }
 
     // suspendedのままのAudioContextを、ユーザー操作(pointerdown)を契機にresumeし直す。
@@ -4006,6 +4262,10 @@ class ComChat {
     }
 
     async confirmPreCall() {
+        // 通知音用AudioContextはここ(クリック直後・await前=ユーザー操作の文脈内)で生成する。
+        // showCallScreen到達時はgetUserMedia等の複数awaitの後で、自動再生ポリシー上
+        // suspendedのまま作られて入退室音が一切鳴らない恐れがあるため
+        this.ensureNotifyAudioContext();
         if (this._noCameraTimeout) { clearTimeout(this._noCameraTimeout); this._noCameraTimeout = null; }
         if (this._precallLoadedHandler) {
             this.precallPreview.removeEventListener('loadeddata', this._precallLoadedHandler);
@@ -4083,6 +4343,9 @@ class ComChat {
         this.teardownMixedAudio();
         // 発話インジケーター: ループ停止・全Analyser破棄・AudioContext close
         this.teardownSpeakingDetection();
+        // 入退室サウンド通知用のAudioContextも用途別分離の作法どおりここでcloseする
+        if (this.notifyAudioContext) { try { this.notifyAudioContext.close(); } catch {} }
+        this.notifyAudioContext = null;
 
         // Stop bg filter loop before stopping localStream to avoid reading stopped tracks
         this.stopBgFilterLoop();
@@ -4120,6 +4383,10 @@ class ComChat {
         this.callTimerHidden = false;
         if (this.callTimerBtn) this.callTimerBtn.classList.remove('timer-hidden');
         if (this.callTimerText) this.callTimerText.textContent = '00:00';
+
+        // 接続品質ポーリングの停止
+        if (this.qualityTimer) { clearInterval(this.qualityTimer); this.qualityTimer = null; }
+        this._qualityPrev.clear();
 
         this.isHost = false;
         this.roomId = null;
@@ -4163,6 +4430,8 @@ class ComChat {
         this.objectURLs.forEach(url => URL.revokeObjectURL(url));
         this.objectURLs = [];
         this.chatMessages.innerHTML = '';
+        // チャットログは自動保存しない(保存したい人だけが手動でダウンロードする設計)
+        this.chatLog = [];
         // 共有メモ: 内容が残っていれば退室時に自動保存し(ローカル完結)、状態を完全リセットする
         this.downloadMemo();
         this.memoText = '';
@@ -4242,6 +4511,9 @@ class ComChat {
         if (this.callTimerInterval) { clearInterval(this.callTimerInterval); this.callTimerInterval = null; }
         this.callStartTime = Date.now();
         this.callTimerHidden = false;
+        // 「入れた」フィードバック。入室ボタン押下(ユーザージェスチャ)起点の呼び出しなので
+        // AudioContextの生成・resumeがここなら確実に成功する
+        this.playJoinSound();
         if (this.callTimerBtn) {
             this.callTimerBtn.classList.remove('timer-hidden');
             this.callTimerBtn.title = '通話時間を非表示';
@@ -4249,6 +4521,9 @@ class ComChat {
         }
         this.updateCallTimer();
         this.callTimerInterval = setInterval(() => this.updateCallTimer(), 1000);
+        // 接続品質の計測開始(二重起動防止のため既存intervalを先にclear)
+        if (this.qualityTimer) { clearInterval(this.qualityTimer); this.qualityTimer = null; }
+        this.qualityTimer = setInterval(() => this.updateConnectionQuality(), 3000);
         // 入室時にページスクロールを先頭へ戻す。参加前にルームID入力欄へフォーカスすると
         // confirmJoinBtnへscrollIntoViewした分のスクロールが残り、通話画面でヘッダーが
         // 画面外(上)へずれる問題があるため。あわせてキーボードも閉じる(iOS)。
