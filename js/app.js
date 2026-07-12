@@ -2001,6 +2001,8 @@ class ComChat {
         this.memoTabBtn.classList.toggle('active', isMemo);
         this.chatMessages.classList.toggle('hidden', isMemo);
         this.chatInputContainer.classList.toggle('hidden', isMemo);
+        // チャットログ保存ボタンはチャットタブ専用(メモタブには自前の保存ボタンがあり紛らわしいため)
+        this.chatDownloadBtn.classList.toggle('hidden', isMemo);
         this.memoView.classList.toggle('hidden', !isMemo);
         if (isMemo) {
             // メモが見えたので更新ドットを消す(チャット未読はそのまま保持する)
