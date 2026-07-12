@@ -103,9 +103,15 @@ class ComChat {
         this.recStartTime = 0;
         this.recTimerInterval = null;
 
+        // 通話経過時間表示(room-info先頭のタイマー)。加算方式ではなくDate.now()からの
+        // 差分で毎回計算し直す(バックグラウンドタブでsetIntervalが間引かれてもズレないため)
+        this.callStartTime = null;
+        this.callTimerInterval = null;
+        this.callTimerHidden = false; // タップで数字を隠している間はtrue(通話毎に既定はfalse)
+
         // ヘッダーのロゴ右に表示するユーザー向けバージョン。stableタグ付与時に更新し、
         // 実機確認待ちの間はβを付ける
-        this.APP_VERSION = 'v4.13β';
+        this.APP_VERSION = 'v4.14β';
 
         // コントロールバーの並べ替え(左利き対応・編集モード)
         this.CONTROL_ORDER_STORAGE_KEY = 'comchat-control-order';
@@ -174,8 +180,26 @@ class ComChat {
         this.screenFullscreenBtn = document.getElementById('screen-fullscreen-btn');
         this.screenSharePlaceholder = document.getElementById('screen-share-placeholder');
 
+        this.callTimerBtn = document.getElementById('call-timer');
+        this.callTimerText = document.getElementById('call-timer-text');
+        if (this.callTimerBtn) {
+            this.callTimerBtn.addEventListener('click', () => this.toggleCallTimerVisibility());
+        }
+
         this.copyRoomIdBtn = document.getElementById('copy-room-id');
         this.copyRoomIdBtn.addEventListener('click', () => this.copyRoomId());
+
+        this.copyInviteLinkBtn = document.getElementById('copy-invite-link');
+        this.copyInviteLinkBtn.addEventListener('click', () => this.copyInviteLink());
+
+        this.showQrBtn = document.getElementById('show-qr-btn');
+        this.showQrBtn.addEventListener('click', () => this.showQrModal());
+        this.qrModal = document.getElementById('qr-modal');
+        this.qrCodePanel = document.getElementById('qr-code-panel');
+        this.qrInviteUrlEl = document.getElementById('qr-invite-url');
+        this.qrModalCloseBtn = document.getElementById('qr-modal-close');
+        this.qrModalCloseBtn.addEventListener('click', () => this.hideQrModal());
+        this.qrModal.addEventListener('click', (e) => { if (e.target === this.qrModal) this.hideQrModal(); });
 
         this.usernameCurrentDisplay = document.getElementById('username-current');
         this.editUsernameBtn = document.getElementById('edit-username-btn');
@@ -235,6 +259,7 @@ class ComChat {
         document.addEventListener('keydown', (e) => {
             if (e.key !== 'Escape') return;
             this.hideHangupModal();
+            this.hideQrModal();
             if (this.precallDialog && !this.precallDialog.classList.contains('hidden')) this.cancelPreCall();
         });
         this.toggleVideoBtn.addEventListener('click', () => this.toggleVideo());
@@ -700,6 +725,22 @@ class ComChat {
         const ready = this.joinRoomIdInput.value.trim().length > 0;
         this.confirmJoinBtn.classList.toggle('btn-ready', ready);
         this.joinRoomBtn.classList.toggle('btn-dimmed', ready);
+    }
+
+    // 招待リンク(?room=xxx)経由での起動: 参加フォームにルームIDを差し込んで名前入力へ
+    // フォーカスするだけで、自動参加はしない(名前入力が必要なため。参加操作自体はユーザーが行う)
+    applyInviteRoomIdFromUrl() {
+        const raw = new URLSearchParams(location.search).get('room');
+        if (!raw) return;
+        // joinRoomと同一のサニタイズ(app.js joinRoom参照)
+        const roomId = raw.trim().toLowerCase().replace(/[^0-9a-z]/g, '');
+        if (!roomId) return;
+        this.showJoinInput();
+        this.joinRoomIdInput.value = roomId;
+        this.updateJoinReadyState();
+        document.getElementById('username')?.focus();
+        // リロード時に古いルームIDで再度参加誘導されないよう、クエリを除去する
+        history.replaceState(null, '', location.pathname);
     }
 
     async createRoom() {
@@ -2514,6 +2555,40 @@ class ComChat {
         return `${m}:${s}`;
     }
 
+    // 経過時間を mm:ss (1時間超は h:mm:ss) 形式にする(通話タイマー用)
+    _formatCallTime(ms) {
+        const totalSec = Math.floor(ms / 1000);
+        const h = Math.floor(totalSec / 3600);
+        const m = String(Math.floor((totalSec % 3600) / 60)).padStart(2, '0');
+        const s = String(totalSec % 60).padStart(2, '0');
+        return h > 0 ? `${h}:${m}:${s}` : `${m}:${s}`;
+    }
+
+    // 通話経過時間を1秒毎に再計算して表示する。callStartTimeからの差分を毎回計算するため、
+    // バックグラウンドタブでsetIntervalが間引かれても表示がズレない。数字を非表示中は
+    // 描画をスキップする(再表示時にtoggleCallTimerVisibility側で即座に計算し直す)
+    updateCallTimer() {
+        if (!this.callTimerText || !this.callStartTime || this.callTimerHidden) return;
+        this.callTimerText.textContent = this._formatCallTime(Date.now() - this.callStartTime);
+    }
+
+    // タイマー部分をタップした時: 数字を隠す⇔再表示する。数字を隠している間もアイコンは
+    // 薄色で残し、再表示のためのタップターゲットを兼ねる
+    toggleCallTimerVisibility() {
+        this.callTimerHidden = !this.callTimerHidden;
+        if (this.callTimerBtn) {
+            this.callTimerBtn.classList.toggle('timer-hidden', this.callTimerHidden);
+            const label = this.callTimerHidden ? '通話時間を表示' : '通話時間を非表示';
+            this.callTimerBtn.title = label;
+            this.callTimerBtn.setAttribute('aria-label', label);
+        }
+        if (this.callTimerHidden) {
+            if (this.callTimerText) this.callTimerText.textContent = '';
+        } else {
+            this.updateCallTimer(); // 再表示時は現在の経過時間を即座に反映する
+        }
+    }
+
     // 点滅●だけを個別のspanに分離してCSSアニメーション(recording-dot-blink)を当てるためのヘルパー。
     // ●は🔴絵文字ではなくCSSの白い円(.rec-blink-dot)で描く。ピル背景が赤のため赤い絵文字では
     // 消えてもコントラスト差が出ず点滅が視認できなかった(実機フィードバック)。
@@ -3930,6 +4005,13 @@ class ComChat {
             this.peer = null;
         }
 
+        // 通話経過時間タイマーの停止(全てのhangup経路がここを通るため確実に止まる)
+        if (this.callTimerInterval) { clearInterval(this.callTimerInterval); this.callTimerInterval = null; }
+        this.callStartTime = null;
+        this.callTimerHidden = false;
+        if (this.callTimerBtn) this.callTimerBtn.classList.remove('timer-hidden');
+        if (this.callTimerText) this.callTimerText.textContent = '00:00';
+
         this.isHost = false;
         this.roomId = null;
         this.roomLocked = false;
@@ -4044,6 +4126,17 @@ class ComChat {
         document.querySelector('.container')?.classList.add('in-call');
         // body直下(.containerの外)にあるパネル/モーダルのダークモード判定用(style.css参照)
         document.body.classList.add('in-call');
+        // 通話経過時間の計測開始(毎回表示状態にリセットし、二重起動を防ぐため既存intervalを先にclear)
+        if (this.callTimerInterval) { clearInterval(this.callTimerInterval); this.callTimerInterval = null; }
+        this.callStartTime = Date.now();
+        this.callTimerHidden = false;
+        if (this.callTimerBtn) {
+            this.callTimerBtn.classList.remove('timer-hidden');
+            this.callTimerBtn.title = '通話時間を非表示';
+            this.callTimerBtn.setAttribute('aria-label', '通話時間を非表示');
+        }
+        this.updateCallTimer();
+        this.callTimerInterval = setInterval(() => this.updateCallTimer(), 1000);
         // 入室時にページスクロールを先頭へ戻す。参加前にルームID入力欄へフォーカスすると
         // confirmJoinBtnへscrollIntoViewした分のスクロールが残り、通話画面でヘッダーが
         // 画面外(上)へずれる問題があるため。あわせてキーボードも閉じる(iOS)。
@@ -4121,6 +4214,48 @@ class ComChat {
         }
     }
 
+    // ルームIDから招待URL(?room=xxx付き)を組み立てる。QRコード表示・招待リンクコピーで共用
+    getInviteLink() {
+        return `${location.origin}${location.pathname}?room=${this.roomId}`;
+    }
+
+    async copyInviteLink() {
+        const linkIcon = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 9.5a3 3 0 0 0 4.5.3l2-2a3 3 0 0 0-4.24-4.24l-1 1"/><path d="M9.5 6.5a3 3 0 0 0-4.5-.3l-2 2a3 3 0 0 0 4.24 4.24l1-1"/></svg>`;
+        const checkIcon = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#28a745" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 8 6 13 14 3"/></svg>`;
+        try {
+            await navigator.clipboard.writeText(this.getInviteLink());
+            this.copyInviteLinkBtn.innerHTML = checkIcon;
+            setTimeout(() => { this.copyInviteLinkBtn.innerHTML = linkIcon; }, 2000);
+            this.showStatus('招待リンクをコピーしました', 'connected');
+        } catch {
+            this.showStatus('コピーに失敗しました', 'error');
+        }
+    }
+
+    showQrModal() {
+        // js/vendor/qrcode.js が読み込めていない場合でもクラッシュさせずエラー表示に留める
+        if (typeof qrcode === 'undefined') {
+            this.showStatus('QRコードの生成に失敗しました', 'error');
+            return;
+        }
+        const url = this.getInviteLink();
+        try {
+            const qr = qrcode(0, 'M');
+            qr.addData(url);
+            qr.make();
+            this.qrCodePanel.innerHTML = qr.createSvgTag({ scalable: true });
+        } catch (e) {
+            this.showStatus('QRコードの生成に失敗しました', 'error');
+            return;
+        }
+        this.qrInviteUrlEl.textContent = url;
+        this.qrModal.classList.remove('hidden');
+    }
+
+    hideQrModal() {
+        this.qrModal.classList.add('hidden');
+    }
+
     generateRoomId() {
         const bytes = new Uint8Array(9);
         crypto.getRandomValues(bytes);
@@ -4146,4 +4281,6 @@ document.addEventListener('DOMContentLoaded', () => {
             window.comChat.username = e.target.value || 'ユーザー';
         });
     }
+
+    window.comChat.applyInviteRoomIdFromUrl();
 });

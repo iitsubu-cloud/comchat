@@ -2103,6 +2103,10 @@ body {
     color: #9ca3af;
 }
 
+.container.in-call .call-timer-btn {
+    color: #9ca3af;
+}
+
 /* 並べ替えツールバー(ヒント文字・ボタン。トースト自体は元々背景を持たないため触れない) */
 .container.in-call .reorder-toolbar-hint {
     color: #9ca3af;
@@ -2243,6 +2247,20 @@ body.in-call .hangup-modal-btn.cancel {
 
 body.in-call .hangup-modal-btn.cancel:hover {
     background: #4b5563;
+}
+
+/* QRコード表示モーダル(index.htmlのインラインstyleで定義されたライト配色を上書きする。
+   qr-code-panelはQRの被写体そのものなので、カメラで読み取れるよう常に白背景のまま維持する) */
+body.in-call .qr-modal-box {
+    background: #1f2937;
+}
+
+body.in-call .qr-modal-title {
+    color: #e5e7eb;
+}
+
+body.in-call .qr-invite-url {
+    color: #9ca3af;
 }
 
 /* ルーム情報内の名前編集input(index.htmlインラインstyle定義)。白地のままだと
