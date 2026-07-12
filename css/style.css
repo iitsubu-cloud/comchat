@@ -293,6 +293,8 @@ body {
     border-radius: 10px;
     overflow: hidden;
     aspect-ratio: 16/9;
+    /* ピン留めのダブルタップ検出用: iOSのダブルタップズームを抑止する */
+    touch-action: manipulation;
 }
 
 .video-element {
@@ -549,6 +551,77 @@ body {
    インラインで制御しているため!importantで共有中のみ上書きし、終了後は自動で戻る */
 .call-main.presenter-mode .video-container.sharer-tile .video-element { visibility: hidden; }
 .call-main.presenter-mode .video-container.sharer-tile .video-center-name { display: block !important; }
+
+/* タイルのピン留め(ダブルタップで拡大)。pin-mode/pinnedクラスと解除条件はJS
+   (pinTile/unpinTile)が管理し、レイアウトはpresenter-mode同様CSS側で決める
+   (relayoutVideoGridはpin-mode中インラインの列数・幅指定を除去する)。
+   presenter-modeとは排他(共有開始/視聴時にJSが必ずunpinする)。 */
+.pin-indicator {
+    /* 挙手(左上)・ミュート(右下)・ラベル(左下)と重ならない右上角の丸バッジ */
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 30px;
+    height: 30px;
+    background: rgba(0, 0, 0, 0.6);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1em;
+    line-height: 1;
+    pointer-events: none;
+    backdrop-filter: blur(2px);
+    z-index: 5;
+}
+
+/* PC・タブレット横向き(≥769px): ピン留めタイルを上部に大きく、他タイルは下部の
+   サムネイル帯(160x90)に並べる(presenter-modeのサムネイル帯と同じ流儀)。
+   グリッド全高からサムネイル帯(90px+gap8px)を引いた高さを主役タイルに充てる。 */
+@media (min-width: 769px) {
+    .video-grid.pin-mode {
+        display: flex;
+        flex-flow: row wrap;
+        justify-content: center;
+        align-content: center;
+        gap: 8px;
+    }
+    .video-grid.pin-mode > .video-container.pinned {
+        order: -1;
+        width: 100%;
+        height: calc(100% - 98px);
+        aspect-ratio: auto;
+        min-height: 0;
+        flex: 0 0 auto;
+    }
+    /* 主役タイルは横長になり得るためcontainで全体を見せる(coverだと大きく切れる) */
+    .video-grid.pin-mode > .video-container.pinned .video-element {
+        object-fit: contain;
+    }
+    .video-grid.pin-mode > .video-container:not(.pinned) {
+        /* ルーム上限6人=サムネイル最大5枚。チャットパネル展開時などグリッドが狭くても
+           5枚が必ず1行に収まる幅に縮める(折り返すと主役タイルが確保した残り98pxの帯を
+           はみ出してクリップされるため)。縮小時も16:9を維持する */
+        width: min(160px, calc(20% - 6.4px));
+        height: auto;
+        aspect-ratio: 16 / 9;
+        flex: 0 0 auto;
+        border: 2px solid rgba(255, 255, 255, 0.4);
+    }
+}
+
+/* モバイル(≤768px): ピン留めタイルをwidth:100%で先頭に、他タイルは3列の小タイルで
+   後続に並べる(グリッドは元々flexbox。JSがインラインwidthを除去するのが前提) */
+@media (max-width: 768px) {
+    .video-grid.pin-mode > .video-container.pinned {
+        order: -1;
+        width: 100%;
+    }
+    .video-grid.pin-mode > .video-container:not(.pinned) {
+        /* gap 8px×2を3等分した分を差し引いて3列に収める */
+        width: calc(33.3% - 6px);
+    }
+}
 
 /* Call screen two-column layout */
 #call-screen {
@@ -2268,4 +2341,87 @@ body.in-call .qr-invite-url {
 .container.in-call .username-edit-input {
     background: #111827;
     color: #e5e7eb;
+}
+
+/* ===== カメラ・マイク選択モーダル =====
+   #more-menuは通話中(body.in-call)にしか存在しないため、qr-modal等と違いライト/
+   ダーク切り替えは不要。hangup-modal系の配色(#1f2937/#374151/#e5e7eb)をそのまま
+   ベースにする(構造はqr-modalを踏襲し、閉じるボタンは.hangup-modal-btnを共用) */
+.device-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    backdrop-filter: blur(4px);
+    animation: modalOverlayIn 0.2s ease;
+}
+
+.device-modal.hidden {
+    display: none !important;
+}
+
+.device-modal-box {
+    background: #1f2937;
+    border-radius: 20px;
+    padding: 28px 24px 24px;
+    width: 320px;
+    max-width: 90vw;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+    animation: modalBoxIn 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.device-modal-title {
+    font-size: 1.1em;
+    font-weight: 700;
+    color: #e5e7eb;
+    margin-bottom: 18px;
+    text-align: center;
+}
+
+.device-modal-field {
+    margin-bottom: 16px;
+}
+
+.device-modal-field:last-of-type {
+    margin-bottom: 20px;
+}
+
+.device-modal-field label {
+    display: block;
+    font-size: 0.8em;
+    color: #9ca3af;
+    margin-bottom: 6px;
+}
+
+.device-modal-field select {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid #374151;
+    background: #111827;
+    color: #e5e7eb;
+    font-size: 0.9em;
+    appearance: none;
+    /* ダークテーマの<select>は既定の矢印がOSごとに白/黒で見えづらいことがあるため、
+       currentColor相当のシンプルな矢印をSVGで自前描画する */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 16px;
+    padding-right: 34px;
+}
+
+.device-modal-field select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+@media (max-width: 480px) {
+    .device-modal-box {
+        width: 92vw;
+        padding: 22px 18px 18px;
+    }
 }

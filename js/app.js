@@ -58,6 +58,9 @@ class ComChat {
         this.mixAudioContext = null;
         this.mixedAudioTrack = null;
         this.mixSources = [];
+        this.mixDest = null;      // 画面共有音声ミキサーの合成先(マイク切替時に新ソースを繋ぎ直すため保持)
+        this.micMixSource = null; // ミキサーに接続中のマイク側source(切替時の差し替え対象)
+        this._onDeviceChange = null; // デバイス設定モーダル表示中のみ購読するdevicechangeハンドラ
         this.isLeaving = false;
         this.isReconnecting = false;
         // 発話インジケーター(active speaker detection)
@@ -111,13 +114,17 @@ class ComChat {
 
         // ヘッダーのロゴ右に表示するユーザー向けバージョン。stableタグ付与時に更新し、
         // 実機確認待ちの間はβを付ける
-        this.APP_VERSION = 'v4.14β';
+        this.APP_VERSION = 'v4.15β';
 
         // コントロールバーの並べ替え(左利き対応・編集モード)
         this.CONTROL_ORDER_STORAGE_KEY = 'comchat-control-order';
         this.DEFAULT_CONTROL_ORDER = ['toggle-video', 'toggle-audio', 'share-screen', 'reaction-btn', 'toggle-chat', 'more-btn', 'hangup'];
         this.isReorderMode = false;
         this._reorderDrag = null; // ドラッグ中の状態(item, pointerId, 各種寸法)を保持
+
+        // 映像タイルのピン留め(ダブルタップで拡大)。'local'またはピアID、なければnull
+        this.pinnedTileId = null;
+        this._lastTileTap = null; // ダブルタップ自前検出用 {id, time}
 
         this.initializeUI();
     }
@@ -131,6 +138,10 @@ class ComChat {
         this.callScreen = document.getElementById('call-screen');
         this.reactionOverlay = document.getElementById('reaction-overlay');
         this.videoGrid = document.getElementById('video-grid');
+        // タイルは動的生成のため、ピン留めのダブルタップ検出はグリッドへのイベント委譲で行う。
+        // iOS Safariはdblclickの発火が不安定なため、clickベースの自前検出に一本化する
+        // (dblclickリスナーを併設すると1回のダブルタップで2度発火するため付けないこと)
+        this.videoGrid.addEventListener('click', (e) => this.onTileTap(e));
         this.chatMessages = document.getElementById('chat-messages');
         this.chatInput = document.getElementById('chat-input');
         this.chatUnreadBadge = document.getElementById('chat-unread-badge');
@@ -260,6 +271,7 @@ class ComChat {
             if (e.key !== 'Escape') return;
             this.hideHangupModal();
             this.hideQrModal();
+            this.closeDeviceModal();
             if (this.precallDialog && !this.precallDialog.classList.contains('hidden')) this.cancelPreCall();
         });
         this.toggleVideoBtn.addEventListener('click', () => this.toggleVideo());
@@ -402,6 +414,22 @@ class ComChat {
             if (this.isRecording) this.stopRecording();
             else this.startRecording();
         });
+
+        // デバイス設定(カメラ・マイク選択)
+        this.deviceSettingsBtn = document.getElementById('device-settings-btn');
+        this.deviceModal = document.getElementById('device-modal');
+        this.cameraSelect = document.getElementById('camera-select');
+        this.micSelect = document.getElementById('mic-select');
+        this.deviceModalCloseBtn = document.getElementById('device-modal-close');
+        this.deviceSettingsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.moreMenu.classList.add('hidden');
+            this.openDeviceModal();
+        });
+        this.deviceModalCloseBtn.addEventListener('click', () => this.closeDeviceModal());
+        this.deviceModal.addEventListener('click', (e) => { if (e.target === this.deviceModal) this.closeDeviceModal(); });
+        this.cameraSelect.addEventListener('change', () => this.handleCameraSelectChange());
+        this.micSelect.addEventListener('change', () => this.handleMicSelectChange());
 
         this.reactionBtn = document.getElementById('reaction-btn');
         this.reactionPanel = document.getElementById('reaction-panel');
@@ -1651,6 +1679,8 @@ class ComChat {
     }
 
     removeVideoElement(id) {
+        // ピン留め中の参加者の退室(またはタイル再生成)時は解除して通常グリッドへ戻す
+        if (this.pinnedTileId === id) this.unpinTile();
         // 発話インジケーターのAnalyserを破棄(タイル削除と同時に必ず解放してリークを防ぐ)
         this.detachSpeakingAnalyser(id);
         const videoElement = document.getElementById(`video-${id}`);
@@ -1670,9 +1700,12 @@ class ComChat {
         if (!grid) return;
         const wide = window.matchMedia('(min-width: 769px)').matches;
         const presenter = grid.closest('.call-main')?.classList.contains('presenter-mode');
+        // ピン留め中もプレゼンターモード同様レイアウトはCSSに任せる。モバイル分岐が
+        // タイルに付けるインラインwidthはCSSのピン留め幅より優先されるため必ず除去する
+        const pinned = grid.classList.contains('pin-mode');
         const tiles = grid.querySelectorAll('.video-container');
         const N = tiles.length;
-        if (presenter || N === 0) {
+        if (presenter || pinned || N === 0) {
             grid.style.gridTemplateColumns = '';
             grid.style.removeProperty('--vg-tile');
             tiles.forEach(t => t.style.removeProperty('width'));
@@ -1710,6 +1743,73 @@ class ComChat {
         }
         grid.style.gridTemplateColumns = `repeat(${bestCols}, auto)`;
         grid.style.setProperty('--vg-tile', Math.floor(best) + 'px');
+    }
+
+    // タイルのダブルタップ検出(clickベースの自前実装)。同一タイルへの300ms以内の
+    // 2回目のclickをダブルタップとみなす(3連打で2度発火しないよう検出後は状態を消費)
+    onTileTap(e) {
+        const tile = e.target.closest('.video-container');
+        if (!tile || !this.videoGrid.contains(tile)) return;
+        const now = Date.now();
+        const last = this._lastTileTap;
+        this._lastTileTap = { id: tile.id, time: now };
+        if (!last || last.id !== tile.id || now - last.time > 300) return;
+        this._lastTileTap = null;
+        this.toggleTilePin(tile.id.replace(/^video-/, ''));
+    }
+
+    toggleTilePin(id) {
+        // 画面共有中は共有画面が主役のため、新規のピン留めは受け付けない
+        if (this.callMain?.classList.contains('presenter-mode')) return;
+        if (this.pinnedTileId === id) {
+            this.unpinTile();
+            return;
+        }
+        // タイルが1枚だけならピン留めの意味がないため無視
+        if (this.videoGrid.querySelectorAll('.video-container').length < 2) return;
+        this.pinTile(id);
+    }
+
+    pinTile(id) {
+        const tile = document.getElementById(`video-${id}`);
+        if (!tile) return;
+        // 別タイルへの付け替え: 旧ピンのクラス・バッジを先に片付ける
+        if (this.pinnedTileId && this.pinnedTileId !== id) {
+            const prev = document.getElementById(`video-${this.pinnedTileId}`);
+            if (prev) this._clearPinDecoration(prev);
+        }
+        this.pinnedTileId = id;
+        this.videoGrid.classList.add('pin-mode');
+        tile.classList.add('pinned');
+        if (!tile.querySelector('.pin-indicator')) {
+            const badge = document.createElement('div');
+            badge.className = 'pin-indicator';
+            badge.textContent = '📌';
+            tile.appendChild(badge);
+        }
+        tile.title = 'ダブルタップで拡大解除';
+        tile.setAttribute('aria-label', 'ピン留め中。ダブルタップで拡大解除');
+        this.relayoutVideoGrid();
+    }
+
+    // ピン留め解除の共通処理。手動解除のほか、対象の退室・画面共有開始/視聴・
+    // 通話終了/開始の各経路から呼ばれる(未ピン時は何もしない)
+    unpinTile() {
+        // pin-modeクラスは状態不整合が起きても残留しないよう無条件で外す
+        this.videoGrid.classList.remove('pin-mode');
+        if (!this.pinnedTileId) return;
+        const tile = document.getElementById(`video-${this.pinnedTileId}`);
+        if (tile) this._clearPinDecoration(tile);
+        this.pinnedTileId = null;
+        this.relayoutVideoGrid();
+    }
+
+    _clearPinDecoration(tile) {
+        tile.classList.remove('pinned');
+        const badge = tile.querySelector('.pin-indicator');
+        if (badge) badge.remove();
+        tile.removeAttribute('title');
+        tile.removeAttribute('aria-label');
     }
 
     sendMessage() {
@@ -2278,6 +2378,7 @@ class ComChat {
             this.screenShareVideo.classList.remove('hidden');
             this.screenSharePlaceholder.classList.add('hidden');
             this.screenShareContainer.classList.remove('hidden');
+            this.unpinTile(); // 画面共有が主役になるためピン留めは解除
             this.callMain.classList.add('presenter-mode');
             this.shareViewerLabel.classList.add('hidden');
             this.stopShareBtn.classList.remove('hidden');
@@ -2329,6 +2430,7 @@ class ComChat {
         }
 
         this.screenShareContainer.classList.remove('hidden');
+        this.unpinTile(); // 画面共有が主役になるためピン留めは解除
         this.callMain.classList.add('presenter-mode');
         this.stopShareBtn.classList.add('hidden');
 
@@ -2487,12 +2589,15 @@ class ComChat {
             // 例外を投げても、catchのteardownMixedAudioで確実にclose()できるようにするため
             this.mixAudioContext = ctx;
             const dest = ctx.createMediaStreamDestination();
+            // マイク切替時に新ソースを同じ合成先へ繋ぎ直せるよう保持しておく
+            this.mixDest = dest;
 
             const micTrack = this.localStream?.getAudioTracks()[0];
             if (micTrack) {
                 const micSource = ctx.createMediaStreamSource(new MediaStream([micTrack]));
                 micSource.connect(dest);
                 this.mixSources.push(micSource);
+                this.micMixSource = micSource;
             }
             const screenAudioTrack = screenStream.getAudioTracks()[0];
             if (screenAudioTrack) {
@@ -2512,6 +2617,8 @@ class ComChat {
     teardownMixedAudio() {
         this.mixSources.forEach(s => { try { s.disconnect(); } catch {} });
         this.mixSources = [];
+        this.micMixSource = null;
+        this.mixDest = null;
         if (this.mixedAudioTrack) { try { this.mixedAudioTrack.stop(); } catch {} }
         this.mixedAudioTrack = null;
         if (this.mixAudioContext) { try { this.mixAudioContext.close(); } catch {} }
@@ -3951,6 +4058,8 @@ class ComChat {
     hangup() {
         this.isLeaving = true;
         this.isReconnecting = false;
+        // デバイス設定モーダルを開いたまま退室された場合、devicechangeの購読が残らないよう閉じる
+        this.closeDeviceModal();
         // 録音中なら退室前に必ず停止する(broadcastがまだ生きている＝peer-leaving/room-closed
         // 送信や接続closeより前)。これで録音ファイルが保存され、他参加者のインジケーターも消える
         if (this.isRecording) this.stopRecording();
@@ -4045,6 +4154,9 @@ class ComChat {
         this.joinRoomBtn.disabled = false;
         this.confirmJoinBtn.disabled = false;
 
+        // ピン留め状態を解除してから全タイルを破棄する(次回入室に持ち越さない)
+        this.unpinTile();
+        this._lastTileTap = null;
         this.videoGrid.innerHTML = '';
         // 退室直前のリアクション残像がウェルカム画面に残らないようクリアする
         if (this.reactionOverlay) this.reactionOverlay.textContent = '';
@@ -4160,6 +4272,9 @@ class ComChat {
         const videoTrack = this.localStream?.getVideoTracks()[0];
         this.toggleVideoBtn.classList.toggle('off', videoTrack ? !videoTrack.enabled : false);
         this.bgFilterBtn.classList.toggle('active', this.bgFilterType !== 'none');
+        // 前回通話のピン留め状態を持ち越さない(異常経路で残留した場合の保険)
+        this.unpinTile();
+        this._lastTileTap = null;
         if (this.chatObserver) this.chatObserver.observe(this.chatMessages);
         // 映像グリッドのサイズ変化(チャット開閉アニメ・ウィンドウリサイズ等)に追従して再レイアウト
         if (!this._gridResizeObserver && window.ResizeObserver) {
@@ -4254,6 +4369,201 @@ class ComChat {
 
     hideQrModal() {
         this.qrModal.classList.add('hidden');
+    }
+
+    // ===== デバイス設定(カメラ・マイク選択) =====
+
+    async openDeviceModal() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+            this.showStatus('この端末はデバイス選択に対応していません', 'error');
+            return;
+        }
+        this.deviceModal.classList.remove('hidden');
+        await this.refreshDeviceOptions();
+        // モーダルを開いている間だけ購読する(常時購読すると不要な再構築が走り続けるため)
+        if (!this._onDeviceChange) {
+            this._onDeviceChange = () => this.refreshDeviceOptions();
+            navigator.mediaDevices.addEventListener('devicechange', this._onDeviceChange);
+        }
+    }
+
+    closeDeviceModal() {
+        if (!this.deviceModal) return;
+        this.deviceModal.classList.add('hidden');
+        if (this._onDeviceChange && navigator.mediaDevices) {
+            navigator.mediaDevices.removeEventListener('devicechange', this._onDeviceChange);
+        }
+        this._onDeviceChange = null;
+    }
+
+    async refreshDeviceOptions() {
+        try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const cams = devices.filter(d => d.kind === 'videoinput');
+            const mics = devices.filter(d => d.kind === 'audioinput');
+            this.populateDeviceSelect(
+                this.cameraSelect, cams, 'カメラ',
+                this.localStream?.getVideoTracks()[0]?.getSettings().deviceId
+            );
+            this.populateDeviceSelect(
+                this.micSelect, mics, 'マイク',
+                this.localStream?.getAudioTracks()[0]?.getSettings().deviceId
+            );
+        } catch {
+            this.showStatus('デバイス一覧を取得できませんでした', 'error');
+        }
+    }
+
+    // deviceIdが空文字のエントリ(未許可時のダミー)は除外し、labelが空なら連番フォールバックにする
+    populateDeviceSelect(selectEl, devices, fallbackLabel, currentDeviceId) {
+        if (!selectEl) return;
+        const valid = devices.filter(d => d.deviceId);
+        selectEl.innerHTML = '';
+        valid.forEach((d, i) => {
+            const option = document.createElement('option');
+            option.value = d.deviceId;
+            option.textContent = d.label || `${fallbackLabel}${i + 1}`;
+            if (d.deviceId === currentDeviceId) option.selected = true;
+            selectEl.appendChild(option);
+        });
+    }
+
+    async handleCameraSelectChange() {
+        const deviceId = this.cameraSelect.value;
+        if (!deviceId) return;
+        this.cameraSelect.disabled = true;
+        try {
+            await this.switchCamera(deviceId);
+            this.showStatus('カメラを切り替えました', 'connected');
+        } catch (err) {
+            this.showStatus(err.message || 'カメラを切り替えられませんでした', 'error');
+            // 失敗時は実際に使用中のデバイスへ選択を戻す(localStreamは変更されていない)
+            const currentId = this.localStream?.getVideoTracks()[0]?.getSettings().deviceId;
+            if (currentId) this.cameraSelect.value = currentId;
+        } finally {
+            this.cameraSelect.disabled = false;
+        }
+    }
+
+    async handleMicSelectChange() {
+        const deviceId = this.micSelect.value;
+        if (!deviceId) return;
+        this.micSelect.disabled = true;
+        try {
+            await this.switchMicrophone(deviceId);
+            this.showStatus('マイクを切り替えました', 'connected');
+        } catch (err) {
+            this.showStatus(err.message || 'マイクを切り替えられませんでした', 'error');
+            const currentId = this.localStream?.getAudioTracks()[0]?.getSettings().deviceId;
+            if (currentId) this.micSelect.value = currentId;
+        } finally {
+            this.micSelect.disabled = false;
+        }
+    }
+
+    // カメラを指定デバイスへ切り替える。新トラックの取得に成功してから旧トラックをstopする
+    // (失敗時に今のカメラを失わないため)。sender側の差し替えは映像の送出経路によって分岐する:
+    // 背景フィルター中はcanvasトラックが、画面共有中は画面トラックがsenderに乗っているため、
+    // どちらの場合もreplaceTrackはせず、それぞれの映像取り込み元だけを新カメラへ向け直す。
+    async switchCamera(deviceId) {
+        if (!this.localStream || !deviceId) return;
+        const oldTrack = this.localStream.getVideoTracks()[0];
+        let newStream;
+        try {
+            newStream = await navigator.mediaDevices.getUserMedia({
+                video: { deviceId: { exact: deviceId } },
+                audio: false
+            });
+        } catch (err) {
+            throw new Error(this.describeMediaError(err));
+        }
+        const newTrack = newStream.getVideoTracks()[0];
+        if (!newTrack) throw new Error('カメラを切り替えられませんでした');
+
+        // カメラOFF(トグル)状態を新トラックにも引き継ぐ
+        if (oldTrack) newTrack.enabled = oldTrack.enabled;
+
+        if (oldTrack) this.localStream.removeTrack(oldTrack);
+        this.localStream.addTrack(newTrack);
+        if (oldTrack) oldTrack.stop();
+
+        // 画面共有中: senderには画面トラックが乗っているためreplaceTrackはしない。
+        // cameraVideoTrackは共有終了時(stopScreenShare)の復帰先として固定参照されるため、
+        // フィルターの有無に関わらず追随させる(共有中にフィルターを外してから共有を止めると
+        // 停止済みの旧カメラへ復帰して映像が黒になるのを防ぐ)
+        if (this.currentScreenStream) this.cameraVideoTrack = newTrack;
+
+        if (this.bgFilterType !== 'none' && this.bgFilterStream) {
+            // 背景フィルター中: フレーム取り込み元(ImageCapture、またはbgSourceVideo)だけを
+            // 新トラックへ向け直す。canvasのcaptureStream自体は不変なのでsenderには触らない
+            if (this.imageCapture) {
+                try { this.imageCapture = new ImageCapture(newTrack); } catch {}
+            }
+            if (this.bgSourceVideo) {
+                this.bgSourceVideo.srcObject = this.localStream;
+                this.bgSourceVideo.play().catch(() => {});
+            }
+        } else if (!this.currentScreenStream) {
+            // 通常時: 全ピアのvideo senderへ直接差し替える
+            this.calls.forEach((call) => {
+                const sender = call.peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+                if (sender) sender.replaceTrack(newTrack).catch(() => {});
+            });
+        }
+        // ローカルタイル(#video-local)のvideo要素はlocalStreamと同一オブジェクト参照を
+        // 保持しているため、addTrack/removeTrackだけで自動的に新カメラの映像に切り替わる
+    }
+
+    // マイクを指定デバイスへ切り替える。画面共有の音声ミキシング中はsenderにmixedAudioTrackが
+    // 乗っているためreplaceTrackはせず、ミキサーへのマイク入力ソースだけを差し替える
+    async switchMicrophone(deviceId) {
+        if (!this.localStream || !deviceId) return;
+        const oldTrack = this.localStream.getAudioTracks()[0];
+        let newStream;
+        try {
+            newStream = await navigator.mediaDevices.getUserMedia({
+                audio: { deviceId: { exact: deviceId } },
+                video: false
+            });
+        } catch (err) {
+            throw new Error(this.describeMediaError(err));
+        }
+        const newTrack = newStream.getAudioTracks()[0];
+        if (!newTrack) throw new Error('マイクを切り替えられませんでした');
+
+        // ミュート状態を新トラックにも引き継ぐ
+        if (oldTrack) newTrack.enabled = oldTrack.enabled;
+
+        if (oldTrack) this.localStream.removeTrack(oldTrack);
+        this.localStream.addTrack(newTrack);
+        if (oldTrack) oldTrack.stop();
+
+        if (this.mixedAudioTrack && this.mixAudioContext && this.mixDest) {
+            // 画面共有音声とのミキシング中: 合成先(mixDest)は不変なので、旧マイクsourceを
+            // 切り離して新トラックのsourceを同じ合成先に繋ぎ直す(senderはmixedAudioTrackのまま)
+            try { this.micMixSource?.disconnect(); } catch {}
+            const micSource = this.mixAudioContext.createMediaStreamSource(new MediaStream([newTrack]));
+            micSource.connect(this.mixDest);
+            const idx = this.mixSources.indexOf(this.micMixSource);
+            if (idx !== -1) this.mixSources.splice(idx, 1, micSource);
+            else this.mixSources.push(micSource);
+            this.micMixSource = micSource;
+        } else {
+            // 通常時: 全ピアのaudio senderへ直接差し替える
+            this.calls.forEach((call) => {
+                const sender = call.peerConnection.getSenders().find(s => s.track && s.track.kind === 'audio');
+                if (sender) sender.replaceTrack(newTrack).catch(() => {});
+            });
+        }
+
+        // 録音中は自分のマイクも録音ミキサー(recDest)に直結しているため、新トラックで繋ぎ直す。
+        // attachRecordingSourceが既存'__self__'ソースのdisconnectとMap上書きまで面倒を見る
+        // (録音していなければ内部ガードで何もしない)
+        this.attachRecordingSource('__self__', this.localStream);
+
+        // 発話インジケーターは生トラックを解析しているため、新トラックで解析し直す
+        this.detachSpeakingAnalyser('local');
+        this.attachSpeakingAnalyser('local', this.localStream);
     }
 
     generateRoomId() {
