@@ -124,7 +124,7 @@ class ComChat {
 
         // ヘッダーのロゴ右に表示するユーザー向けバージョン。stableタグ付与時に更新し、
         // 実機確認待ちの間はβを付ける
-        this.APP_VERSION = 'v4.16β';
+        this.APP_VERSION = 'v4.17β';
 
         // コントロールバーの並べ替え(左利き対応・編集モード)
         this.CONTROL_ORDER_STORAGE_KEY = 'comchat-control-order';
@@ -1113,7 +1113,10 @@ class ComChat {
             return;
         }
         // Enforce 6-person limit (5 remotes + self)
-        if (this.connections.size >= 5) {
+        // 既に名簿に居る同一ピアIDは満員判定から除外する(満員の部屋で'disconnected'固着
+        // からの再接続が、下の救済ロジックに届く前にroom-fullで弾かれるのを防ぐ。
+        // handleIncomingCall側の !connections.has(call.peer) と対の判定)
+        if (this.connections.size >= 5 && !this.connections.has(conn.peer)) {
             // Notify the joiner that the room is full before closing, so they
             // can show an error instead of silently landing in an empty room.
             conn.on('open', () => {
@@ -1129,7 +1132,10 @@ class ComChat {
         if (this.connections.has(conn.peer)) {
             const st = this.connections.get(conn.peer).peerConnection?.connectionState;
             if (st === 'disconnected') {
-                this.cleanupPeer(conn.peer);
+                // 本人の再接続なので退出扱いにしない: 退出音・トーストを抑制し、名簿も
+                // 残す(直後のuser-joinがisNew=falseになり参加音も自然に鳴らない=瞬断で
+                // 「退出→参加」の通知が乱打されるのを防ぐ)
+                this.cleanupPeer(conn.peer, { quietReconnect: true });
             } else {
                 conn.close();
                 return;
@@ -1461,8 +1467,10 @@ class ComChat {
             }
             case 'screen-share-start':
                 // なりすまし防止: 本文のpeerIdではなく実際の送信元(senderId)を共有者として扱う
-                // (自己ID詐称による固着やセレクタへの不正文字混入も同時に防ぐ)
-                this.enterRemotePresenterMode(senderId, data.username);
+                // (自己ID詐称による固着やセレクタへの不正文字混入も同時に防ぐ)。
+                // 表示名も自己申告(data.username)ではなく真正な名簿から解決する(memo-editingと同じ作法。
+                // 自己申告のままだと他人の名前を名乗った「〇〇が共有中」表示や超長文字列での表示崩れが可能)
+                this.enterRemotePresenterMode(senderId, this.usernames.get(senderId) || 'ユーザー');
                 break;
             case 'screen-share-stop':
                 // 現在の共有者からの停止通知だけ処理する。共有が重なった場合(A共有中に
@@ -1524,6 +1532,7 @@ class ComChat {
                 break;
             }
             case 'file-meta': {
+                if (!this._allowMessage(senderId)) break; // 連投フラッディング対策(進捗DOMを無制限に生やされないため)
                 // 悪意あるピアからの過大/不正なメタ情報を弾く(受信側メモリ膨張・フリーズ対策)。
                 // 上限3200 = ceil(200MB / 64KBチャンク)＝送信側sendFileの正規最大チャンク数。
                 if (typeof data.id !== 'string' ||
@@ -1531,9 +1540,14 @@ class ComChat {
                     typeof data.size !== 'number' || data.size < 0 || data.size > 200 * 1024 * 1024) {
                     break;
                 }
+                // 同時転送数の上限(正規クライアントは1人1転送=最大5並行。複数idへの並行チャンク
+                // 送り込みでメモリを転送数分だけ膨らませる攻撃を止める)
+                if (this.receivingFiles.size >= 10) break;
+                // ファイル名は表示・チャットログに乗るため長さを制限する(user-joinの50字と同じ発想)
+                const safeName = String(data.name ?? 'ファイル').slice(0, 100);
                 const senderName = this.usernames.get(senderId) || senderId;
-                const progress = this.createFileProgress(senderName, data.name, '受信中');
-                this.receivingFiles.set(data.id, { meta: data, chunks: [], received: 0, progress, senderId });
+                const progress = this.createFileProgress(senderName, safeName, '受信中');
+                this.receivingFiles.set(data.id, { meta: { ...data, name: safeName }, chunks: [], received: 0, progress, senderId });
                 break;
             }
             case 'file-chunk':
@@ -1580,7 +1594,10 @@ class ComChat {
     // 指定ピアのセッション状態を即座に片付ける(明示退室'peer-leaving'受信時と、
     // 定員判定前のゴースト掃除で使用)。conn/callのcloseで後から届く遅延close/error
     // イベントは、Mapから消えていること(callはidentityガード)により実質no-opになる
-    cleanupPeer(peerId) {
+    // quietReconnect: 同一ピアIDからの再接続受け入れ時の掃除(実際には退室していない)。
+    // 退出通知を出さず、名簿(usernames)も残す(新接続のuser-joinで上書きされる。
+    // 万一新接続が確立しなければ、その接続のclose/errorハンドラが名簿ごと片付ける)
+    cleanupPeer(peerId, { quietReconnect = false } = {}) {
         const leftName = this.usernames.get(peerId); // 削除前に名前を確保(退出通知で使う)
         const conn = this.connections.get(peerId);
         if (conn) { try { conn.close(); } catch (e) {} }
@@ -1588,7 +1605,7 @@ class ComChat {
         if (call) { try { call.close(); } catch (e) {} }
         this.connections.delete(peerId);
         this.calls.delete(peerId);
-        this.usernames.delete(peerId);
+        if (!quietReconnect) this.usernames.delete(peerId);
         this.muteStates.delete(peerId);
         this.cameraStates.delete(peerId);
         this.handStates.delete(peerId);
@@ -1609,7 +1626,7 @@ class ComChat {
         }
         if (this.peer) this.updateRoomInfo();
         // usernamesに居なかった(幽霊エントリの掃除等)場合や、自分の退室処理中は鳴らさない
-        if (leftName !== undefined && !this.isLeaving && this.callStartTime) {
+        if (!quietReconnect && leftName !== undefined && !this.isLeaving && this.callStartTime) {
             this.playLeaveSound();
             this.showStatus(`${leftName}さんが退出しました`, 'connected');
         }
@@ -2172,13 +2189,19 @@ class ComChat {
         const BUFFER_HIGH = 512 * 1024;
         this.isSendingFile = true;
         this.fileAttachBtn.disabled = true;
+        // 退室(hangup)で進行中の送信ループを中断するための世代トークン。broadcastは
+        // this.connectionsをライブ参照するため、これが無いと退室→再入室後も旧ループが
+        // 生き残り、新しいルームの全員へfile-metaなしのチャンクを流し続けてしまう
+        const sendGen = this._fileSendGen || 0;
         const progress = this.createFileProgress(this.username, file.name, '送信中');
         try {
             const buffer = await file.arrayBuffer();
             const totalChunks = Math.ceil(buffer.byteLength / CHUNK) || 1;
+            if (sendGen !== (this._fileSendGen || 0)) return; // arrayBuffer待機中に退室済み
             this.broadcast({ type: 'file-meta', id: fileId, name: file.name, size: file.size, mimeType: file.type, totalChunks });
             for (let i = 0; i < totalChunks; i++) {
                 await this.waitForBuffers(BUFFER_HIGH);
+                if (sendGen !== (this._fileSendGen || 0)) return; // 退室済み: 静かに中断(UI状態はhangupがリセット済み)
                 const slice = new Uint8Array(buffer, i * CHUNK, Math.min(CHUNK, buffer.byteLength - i * CHUNK));
                 // Build binary string in 8 KB sub-batches to avoid O(n²) string concat
                 // and stack overflow from apply() on large arrays.
@@ -2199,8 +2222,12 @@ class ComChat {
             progress.barInner.style.background = '#dc3545';
             this.showStatus('ファイルの送信に失敗しました', 'error');
         } finally {
-            this.isSendingFile = false;
-            this.fileAttachBtn.disabled = false;
+            // 中断時(世代不一致)はhangupが既にリセット済みで、再入室後の新しい送信の
+            // 状態を巻き戻さないよう触らない
+            if (sendGen === (this._fileSendGen || 0)) {
+                this.isSendingFile = false;
+                this.fileAttachBtn.disabled = false;
+            }
         }
     }
 
@@ -2248,7 +2275,7 @@ class ComChat {
         this.chatMessages.appendChild(msgDiv);
         this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
         this._pushChatLog(username, '【ファイル】' + filename);
-        return { fileDiv, statusEl, barInner, label };
+        return { msgDiv, fileDiv, statusEl, barInner, label };
     }
 
     updateFileProgress(progress, pct) {
@@ -2259,6 +2286,11 @@ class ComChat {
 
     finalizeFileProgress(progress, filename, filesize, url) {
         const { fileDiv } = progress;
+        // 転送中(数分かかりうる)にチャットの300件トリムで押し出されていた場合、末尾へ戻す
+        // (でないと受信は成功したのにダウンロードリンクがどこにも現れず取得不能になる)
+        if (progress.msgDiv && !progress.msgDiv.isConnected) {
+            this.chatMessages.appendChild(progress.msgDiv);
+        }
         fileDiv.classList.remove('file-progress');
         fileDiv.innerHTML = '';
         const link = document.createElement('a');
@@ -3126,8 +3158,38 @@ class ComChat {
         }
         if (this.notifyAudioContext.state === 'suspended') {
             this.notifyAudioContext.resume().catch(() => {});
+            // iOS等でバックグラウンド復帰後にresumeが即座に効かない場合、次のユーザー操作で
+            // 再試行する(発話解析側のregisterSpeakingResumeRetryと同じ作法。これが無いと
+            // 一度サスペンドされた後、通話終了まで入退室音が黙って鳴らなくなる)
+            this.registerNotifyResumeRetry();
         }
         return this.notifyAudioContext;
+    }
+
+    // suspendedのままのnotifyAudioContextを、ユーザー操作を契機にresumeし直す。
+    // 成功(running)またはhangupで解除。多重登録はしない。
+    registerNotifyResumeRetry() {
+        if (this._notifyResumeHandler) return;
+        this._notifyResumeHandler = () => {
+            const ctx = this.notifyAudioContext;
+            if (!ctx || ctx.state === 'closed') {
+                this.unregisterNotifyResumeRetry();
+                return;
+            }
+            if (ctx.state === 'suspended') {
+                ctx.resume().then(() => this.unregisterNotifyResumeRetry()).catch(() => {});
+            } else {
+                this.unregisterNotifyResumeRetry();
+            }
+        };
+        this._notifyResumeEvent = window.PointerEvent ? 'pointerdown' : 'touchend';
+        document.addEventListener(this._notifyResumeEvent, this._notifyResumeHandler);
+    }
+
+    unregisterNotifyResumeRetry() {
+        if (!this._notifyResumeHandler) return;
+        document.removeEventListener(this._notifyResumeEvent, this._notifyResumeHandler);
+        this._notifyResumeHandler = null;
     }
 
     // freqsで指定した周波数を順に短く鳴らす(2音目は1音目の0.10秒後に開始)。
@@ -3962,6 +4024,9 @@ class ComChat {
                     this.imageCapture = ic;
                 } catch (icErr) {
                     console.warn('ImageCapture unavailable:', icErr);
+                    // 待機中に割り込みがあった場合はここで退く(このまま続けると後続呼び出しが
+                    // セットしたimageCaptureのnull上書きやbgSourceVideoの二重生成が起きる)
+                    if (gen !== this._bgFilterGen) return;
                     this.imageCapture = null;
                 }
             }
@@ -4234,6 +4299,10 @@ class ComChat {
         if (this.bgImagePanel) this.bgImagePanel.classList.add('hidden');
 
         // Clean up bg filter
+        // 進行中の初回セットアップ(applyBgFilter内のawait待機中)を無効化する。これが無いと
+        // モデルDL等の待機中にキャンセルした場合、セットアップがgenチェックを素通りして
+        // 孤立リソース(segmenter/canvas/captureStream)の生成と誤トーストまで完走してしまう
+        this._bgFilterGen = (this._bgFilterGen || 0) + 1;
         this.stopBgFilterLoop();
         this.cleanupBgFilterResources();
         this.bgFilterType = 'none';
@@ -4348,8 +4417,13 @@ class ComChat {
         // 入退室サウンド通知用のAudioContextも用途別分離の作法どおりここでcloseする
         if (this.notifyAudioContext) { try { this.notifyAudioContext.close(); } catch {} }
         this.notifyAudioContext = null;
+        this.unregisterNotifyResumeRetry();
 
         // Stop bg filter loop before stopping localStream to avoid reading stopped tracks
+        // cancelPreCallと同様、進行中の初回セットアップも世代トークンで無効化する
+        // (フィルター選択直後に退室すると、セットアップ完走で孤立video/canvas/streamの
+        // 生成とウェルカム画面への「適用しました」誤トーストが起きるのを防ぐ)
+        this._bgFilterGen = (this._bgFilterGen || 0) + 1;
         this.stopBgFilterLoop();
         this.cleanupBgFilterResources();
         this.bgFilterType = 'none';
@@ -4453,6 +4527,8 @@ class ComChat {
         this.memoEditingIndicator.textContent = '';
         this.memoDot.classList.add('hidden');
         this.switchChatTab('chat');
+        // 進行中のファイル送信ループを中断する(sendFile側が各チャンク前に世代を確認して退く)
+        this._fileSendGen = (this._fileSendGen || 0) + 1;
         this.isSendingFile = false;
         this.fileAttachBtn.disabled = false;
         if (this.chatObserver) this.chatObserver.unobserve(this.chatMessages);
