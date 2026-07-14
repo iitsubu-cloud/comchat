@@ -15,6 +15,8 @@ class ComChat {
         this.isAudioMuted = false;
         this.muteStates = new Map();
         this.cameraStates = new Map();
+        this.cameraOffImage = null; // 自分が設定したカメラオフ時画像のdataURL(localStorage永続)
+        this.peerCameraOffImages = new Map(); // peerId → 相手から配布されたカメラオフ時画像のdataURL
         this.receivingFiles = new Map();
         this._msgRate = new Map(); // 悪意あるピアからのメッセージ洪水対策(ピアごとのレート計測)
         this.isConnecting = false;
@@ -51,6 +53,7 @@ class ComChat {
         this.bgPresets = {};
         this.bgHistory = [];
         this.bgImagePanel = null;
+        this.cameraOffImagePanel = null;
         this.objectURLs = [];
         this.currentRemoteSharerId = null;
         this.currentScreenStream = null;
@@ -124,7 +127,7 @@ class ComChat {
 
         // ヘッダーのロゴ右に表示するユーザー向けバージョン。stableタグ付与時に更新し、
         // 実機確認待ちの間はβを付ける
-        this.APP_VERSION = 'v4.17β';
+        this.APP_VERSION = 'v4.18β';
 
         // コントロールバーの並べ替え(左利き対応・編集モード)
         this.CONTROL_ORDER_STORAGE_KEY = 'comchat-control-order';
@@ -342,6 +345,7 @@ class ComChat {
             e.stopPropagation();
             this.moreMenu.classList.add('hidden');
             if (this.bgImagePanel) this.bgImagePanel.classList.add('hidden');
+            if (this.cameraOffImagePanel) this.cameraOffImagePanel.classList.add('hidden');
             const isHidden = this.filterPanel.classList.contains('hidden');
             if (!isHidden) { this.filterPanel.classList.add('hidden'); return; }
             const rect = this.moreBtn.getBoundingClientRect();
@@ -353,6 +357,7 @@ class ComChat {
         document.addEventListener('click', () => {
             this.filterPanel.classList.add('hidden');
             if (this.bgImagePanel) this.bgImagePanel.classList.add('hidden');
+            if (this.cameraOffImagePanel) this.cameraOffImagePanel.classList.add('hidden');
             if (this.reactionPanel) this.reactionPanel.classList.add('hidden');
             if (this.moreMenu) this.moreMenu.classList.add('hidden');
         });
@@ -379,12 +384,14 @@ class ComChat {
             }
         });
         this.initBgImagePanel();
+        this.initCameraOffImagePanel();
 
         // 「その他」メニュー: フィルター等、頻度の低い機能をまとめる汎用リスト
         this.moreBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             this.filterPanel.classList.add('hidden');
             if (this.bgImagePanel) this.bgImagePanel.classList.add('hidden');
+            if (this.cameraOffImagePanel) this.cameraOffImagePanel.classList.add('hidden');
             if (this.reactionPanel) this.reactionPanel.classList.add('hidden');
             const isHidden = this.moreMenu.classList.contains('hidden');
             if (!isHidden) { this.moreMenu.classList.add('hidden'); return; }
@@ -443,6 +450,14 @@ class ComChat {
         this.cameraSelect.addEventListener('change', () => this.handleCameraSelectChange());
         this.micSelect.addEventListener('change', () => this.handleMicSelectChange());
 
+        // カメラオフ時の画像設定
+        this.cameraOffImageBtn = document.getElementById('camera-off-image-btn');
+        this.cameraOffImageBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.moreMenu.classList.add('hidden');
+            this.showCameraOffImagePanel();
+        });
+
         this.reactionBtn = document.getElementById('reaction-btn');
         this.reactionPanel = document.getElementById('reaction-panel');
         this.handToggleBtn = document.getElementById('hand-toggle-btn');
@@ -450,6 +465,7 @@ class ComChat {
             e.stopPropagation();
             this.filterPanel.classList.add('hidden');
             if (this.bgImagePanel) this.bgImagePanel.classList.add('hidden');
+            if (this.cameraOffImagePanel) this.cameraOffImagePanel.classList.add('hidden');
             if (this.moreMenu) this.moreMenu.classList.add('hidden');
             const isHidden = this.reactionPanel.classList.contains('hidden');
             if (!isHidden) { this.reactionPanel.classList.add('hidden'); return; }
@@ -654,6 +670,7 @@ class ComChat {
         // 編集モード中に開いているパネル類は全て閉じる
         this.filterPanel.classList.add('hidden');
         if (this.bgImagePanel) this.bgImagePanel.classList.add('hidden');
+        if (this.cameraOffImagePanel) this.cameraOffImagePanel.classList.add('hidden');
         if (this.reactionPanel) this.reactionPanel.classList.add('hidden');
         this.moreMenu.classList.add('hidden');
         this.controlsEl.classList.add('reorder-mode');
@@ -818,6 +835,7 @@ class ComChat {
             this.usernames.clear();
             this.muteStates.clear();
             this.cameraStates.clear();
+            this.peerCameraOffImages.clear();
             this.handStates.clear();
             this.isHost = false;
             this.roomId = null;
@@ -883,6 +901,7 @@ class ComChat {
             this.usernames.clear();
             this.muteStates.clear();
             this.cameraStates.clear();
+            this.peerCameraOffImages.clear();
             this.handStates.clear();
             this.roomId = null;
             this.createRoomBtn.disabled = false;
@@ -1161,6 +1180,7 @@ class ComChat {
             this.usernames.delete(conn.peer);
             this.muteStates.delete(conn.peer);
             this.cameraStates.delete(conn.peer);
+            this.peerCameraOffImages.delete(conn.peer);
             this.handStates.delete(conn.peer);
             this._qualityPrev.delete(conn.peer);
             this._msgRate.delete(conn.peer);
@@ -1224,6 +1244,7 @@ class ComChat {
             this.usernames.delete(conn.peer);
             this.muteStates.delete(conn.peer);
             this.cameraStates.delete(conn.peer);
+            this.peerCameraOffImages.delete(conn.peer);
             this.handStates.delete(conn.peer);
             this._qualityPrev.delete(conn.peer);
             this._msgRate.delete(conn.peer);
@@ -1261,6 +1282,8 @@ class ComChat {
         conn.send({ type: 'mute-state', muted: this.isAudioMuted });
         const cameraEnabled = this.localStream?.getVideoTracks()[0]?.enabled ?? true;
         conn.send({ type: 'camera-state', enabled: cameraEnabled });
+        // カメラオフ時画像は設定している場合のみ配布する(新規参加・後入り・復帰ピアへの同期)
+        if (this.cameraOffImage) conn.send({ type: 'camera-off-image', image: this.cameraOffImage });
         conn.send({ type: 'hand-state', raised: this.isHandRaised });
         // newJoinの時だけjoinフラグを付け、受信側で「録音中の部屋への途中参加」と
         // 「フォアグラウンド復帰時の通常の再同期」を区別できるようにする
@@ -1459,10 +1482,25 @@ class ComChat {
             }
             case 'camera-state': {
                 this.cameraStates.set(senderId, data.enabled);
-                const cn = document.querySelector(`#video-${senderId} .video-center-name`);
-                if (cn) cn.style.display = data.enabled ? 'none' : 'block';
                 const tile = document.getElementById(`video-${senderId}`);
                 if (tile) tile.classList.toggle('camera-off', !data.enabled);
+                // 中央名/カメラオフ画像の表示切替はupdateCameraOffVisualに一元化してある
+                this.updateCameraOffVisual(senderId);
+                break;
+            }
+            case 'camera-off-image': {
+                if (!this._allowMessage(senderId)) break; // 連投フラッディング対策
+                if (data.image === null) {
+                    // 相手が画像設定を解除した通知。中央名表示に戻す
+                    this.peerCameraOffImages.delete(senderId);
+                    this.updateCameraOffVisual(senderId);
+                    break;
+                }
+                // なりすまし・巨大ペイロード対策: 型・data URLの形式・サイズ(約300KB)を検証し、
+                // 不正なものは黙って無視する(メモリ膨張や表示崩れを防ぐ)
+                if (typeof data.image !== 'string' || !data.image.startsWith('data:image/') || data.image.length > 400000) break;
+                this.peerCameraOffImages.set(senderId, data.image);
+                this.updateCameraOffVisual(senderId);
                 break;
             }
             case 'screen-share-start':
@@ -1608,6 +1646,7 @@ class ComChat {
         if (!quietReconnect) this.usernames.delete(peerId);
         this.muteStates.delete(peerId);
         this.cameraStates.delete(peerId);
+        this.peerCameraOffImages.delete(peerId);
         this.handStates.delete(peerId);
         this._qualityPrev.delete(peerId);
         this._msgRate.delete(peerId);
@@ -1711,6 +1750,14 @@ class ComChat {
         video.playsInline = true; // Required for iOS Safari
         video.muted = id === 'local';
 
+        // カメラオフ時の全面画像。visibility:hiddenのvideoの上に重なるが、実際に見えるかは
+        // has-imageクラス(updateCameraOffVisualが付与)とタイルのcamera-offクラス次第
+        const cameraOffAvatar = document.createElement('img');
+        cameraOffAvatar.className = 'camera-off-avatar';
+        cameraOffAvatar.alt = '';
+        cameraOffAvatar.setAttribute('aria-hidden', 'true');
+        cameraOffAvatar.draggable = false;
+
         const labelDiv = document.createElement('div');
         labelDiv.className = 'video-label';
         const labelNameSpan = document.createElement('span');
@@ -1746,22 +1793,49 @@ class ComChat {
         if (id === 'local') {
             const vt = this.localStream?.getVideoTracks()[0];
             if (vt && !vt.enabled) {
-                centerName.style.display = 'block';
                 videoContainer.classList.add('camera-off');
             }
         } else if (this.cameraStates.has(id) && !this.cameraStates.get(id)) {
-            centerName.style.display = 'block';
             videoContainer.classList.add('camera-off');
         }
 
         videoContainer.appendChild(video);
+        videoContainer.appendChild(cameraOffAvatar);
         videoContainer.appendChild(labelDiv);
         videoContainer.appendChild(muteIndicator);
         videoContainer.appendChild(handIndicator);
         videoContainer.appendChild(centerName);
         this.videoGrid.appendChild(videoContainer);
+        // 中央名/カメラオフ画像の表示切替はupdateCameraOffVisualに一元化してある。
+        // タイルがDOMに入った後(appendChild後)・レイアウト計算前に呼ぶ
+        this.updateCameraOffVisual(id);
         video.play().catch(() => {});
         this.relayoutVideoGrid();
+    }
+
+    // カメラオフ時のタイル表示(カスタム画像 or 中央名)をここに一元化する。
+    // camera-state受信・toggleVideo・addVideoElement・camera-off-image受信の
+    // いずれもここを呼ぶことで、画像の有無による表示分岐がずれないようにする
+    // (画像がある時は中央名を出さない。名前は左下のvideo-labelで見える)
+    updateCameraOffVisual(id) {
+        const tile = document.getElementById(`video-${id}`);
+        if (!tile) return;
+        const image = id === 'local' ? this.cameraOffImage : this.peerCameraOffImages.get(id);
+        const isCameraOff = id === 'local'
+            ? !this.localStream?.getVideoTracks()[0]?.enabled
+            : (this.cameraStates.has(id) && !this.cameraStates.get(id));
+        const avatar = tile.querySelector('.camera-off-avatar');
+        if (avatar) {
+            if (image) {
+                avatar.src = image;
+                avatar.classList.add('has-image');
+            } else {
+                avatar.classList.remove('has-image');
+                avatar.removeAttribute('src');
+            }
+        }
+        const centerName = tile.querySelector('.video-center-name');
+        if (centerName) centerName.style.display = (isCameraOff && !image) ? 'block' : 'none';
     }
 
     removeVideoElement(id) {
@@ -2350,10 +2424,10 @@ class ComChat {
                 this.imageSegmenter ? this.startBgFilterLoop() : this.startCSSFilterLoop();
             }
         }
-        const localCenterName = document.querySelector('#video-local .video-center-name');
-        if (localCenterName) localCenterName.style.display = videoTrack.enabled ? 'none' : 'block';
         const localTile = document.getElementById('video-local');
         if (localTile) localTile.classList.toggle('camera-off', !videoTrack.enabled);
+        // 中央名/カメラオフ画像の表示切替はupdateCameraOffVisualに一元化してある
+        this.updateCameraOffVisual('local');
         this.broadcast({ type: 'camera-state', enabled: videoTrack.enabled });
     }
 
@@ -3545,6 +3619,122 @@ class ComChat {
         this.clampPanelToViewport(this.bgImagePanel, rect);
     }
 
+    // カメラオフ時に自分のタイル・相手全員のタイルへ表示するカスタム画像の設定パネル。
+    // 映像トラックには乗せず、データチャネルで配布して各自ローカル描画する(方式A)ため、
+    // 背景フィルター(applyBgFilter)のパイプラインとは完全に独立している
+    initCameraOffImagePanel() {
+        this.cameraOffImagePanel = document.getElementById('camera-off-image-panel');
+        this.cameraOffImagePanel.addEventListener('click', (e) => e.stopPropagation());
+        this.cameraOffImagePreview = document.getElementById('camera-off-image-preview');
+        this.cameraOffRemoveBtn = document.getElementById('camera-off-remove-btn');
+
+        // 設定は端末に永続化する(ユーザー設定なので次回以降の通話でも有効にするため)
+        try {
+            const saved = localStorage.getItem('comchat_cameraoff_image');
+            if (saved) this.cameraOffImage = saved;
+        } catch {}
+        this.renderCameraOffImagePreview();
+
+        const uploadBtn = document.getElementById('camera-off-upload-btn');
+        const uploadInput = document.getElementById('camera-off-upload-input');
+        uploadBtn.addEventListener('click', (e) => { e.stopPropagation(); uploadInput.click(); });
+        uploadInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            e.target.value = '';
+            try {
+                const dataURL = await this.resizeCameraOffImageToDataURL(file);
+                // 低画質再試行後もなお大きい場合はデータチャネル配布・保存のコストを考えて諦める
+                if (dataURL.length > 400000) {
+                    this.showStatus('画像が大きすぎます', 'error');
+                    return;
+                }
+                this.setCameraOffImage(dataURL);
+                this.cameraOffImagePanel.classList.add('hidden');
+                this.showStatus('カメラオフ時の画像を設定しました', 'connected');
+            } catch (err) {
+                console.warn('Failed to load camera-off image:', err);
+            }
+        });
+
+        this.cameraOffRemoveBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.removeCameraOffImage();
+            this.cameraOffImagePanel.classList.add('hidden');
+            this.showStatus('カメラオフ時の画像を解除しました', 'connected');
+        });
+    }
+
+    renderCameraOffImagePreview() {
+        if (!this.cameraOffImagePreview || !this.cameraOffRemoveBtn) return;
+        if (this.cameraOffImage) {
+            this.cameraOffImagePreview.src = this.cameraOffImage;
+            this.cameraOffImagePreview.classList.remove('hidden');
+            this.cameraOffRemoveBtn.classList.remove('hidden');
+        } else {
+            this.cameraOffImagePreview.classList.add('hidden');
+            this.cameraOffImagePreview.removeAttribute('src');
+            this.cameraOffRemoveBtn.classList.add('hidden');
+        }
+    }
+
+    // 設定・解除の両方から呼ぶ共通処理。ローカル反映→保存→配布の順で行う
+    setCameraOffImage(dataURL) {
+        this.cameraOffImage = dataURL;
+        try { localStorage.setItem('comchat_cameraoff_image', dataURL); } catch {} // 保存失敗しても機能は続行する
+        this.broadcast({ type: 'camera-off-image', image: dataURL });
+        this.updateCameraOffVisual('local');
+        this.renderCameraOffImagePreview();
+    }
+
+    removeCameraOffImage() {
+        this.cameraOffImage = null;
+        try { localStorage.removeItem('comchat_cameraoff_image'); } catch {}
+        this.broadcast({ type: 'camera-off-image', image: null });
+        this.updateCameraOffVisual('local');
+        this.renderCameraOffImagePreview();
+    }
+
+    // ファイル選択→縮小(長辺最大640px)→JPEG化。既定品質0.8で大きすぎる場合のみ0.6で
+    // 再エンコードする(データチャネル配布とlocalStorage保存の両方でペイロードを抑えるため)
+    resizeCameraOffImageToDataURL(file) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            const url = URL.createObjectURL(file);
+            img.onload = () => {
+                URL.revokeObjectURL(url);
+                const maxSide = 640;
+                let w = img.naturalWidth, h = img.naturalHeight;
+                const longSide = Math.max(w, h);
+                if (longSide > maxSide) {
+                    const ratio = maxSide / longSide;
+                    w = Math.round(w * ratio);
+                    h = Math.round(h * ratio);
+                }
+                const canvas = document.createElement('canvas');
+                canvas.width = w; canvas.height = h;
+                canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                let dataURL = canvas.toDataURL('image/jpeg', 0.8);
+                if (dataURL.length > 400000) {
+                    dataURL = canvas.toDataURL('image/jpeg', 0.6);
+                }
+                resolve(dataURL);
+            };
+            img.onerror = (err) => { URL.revokeObjectURL(url); reject(err); };
+            img.src = url;
+        });
+    }
+
+    showCameraOffImagePanel() {
+        // 通話中のみ開く(プレコールでは呼ばれない想定)。位置基準は他の「その他」メニュー内
+        // パネルと同じく#more-btn(常時表示・安定した要素)
+        const rect = this.moreBtn.getBoundingClientRect();
+        this.cameraOffImagePanel.style.bottom = (window.innerHeight - rect.top + 10) + 'px';
+        this.cameraOffImagePanel.style.left = (rect.left + rect.width / 2) + 'px';
+        this.cameraOffImagePanel.classList.remove('hidden');
+        this.clampPanelToViewport(this.cameraOffImagePanel, rect);
+    }
+
     _presetUrl(name) {
         const map = {
             'white-accent': 'images/bg-room.jpg',
@@ -4471,6 +4661,7 @@ class ComChat {
         this.isAudioMuted = false;
         this.muteStates.clear();
         this.cameraStates.clear();
+        this.peerCameraOffImages.clear();
         this.handStates.clear();
         this.isHandRaised = false;
         this.recordingStates.clear();

@@ -365,6 +365,24 @@ body {
     visibility: hidden;
 }
 
+/* カメラオフ時のカスタム画像。設定されている時だけ黒背景の上に全面表示する
+   (未設定時はdisplay:noneのまま。video要素より後・video-label等より前のDOM順で
+   重なるようz-indexは付けない) */
+.camera-off-avatar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: none;
+    pointer-events: none;
+}
+
+.video-container.camera-off .camera-off-avatar.has-image {
+    display: block;
+}
+
 /* マイクミュートインジケーター */
 .mute-indicator {
     position: absolute;
@@ -1597,6 +1615,19 @@ body {
 }
 
 .bg-upload-btn:hover { background: #d0f5f0; }
+
+/* カメラオフ時の画像パネルのプレビュー(16:9・小さめ)。パネル(.bg-image-panel)は
+   内容物の幅に広がるため、画像の元サイズ(長辺640px)に引っ張られないよう固定幅にする */
+.camera-off-image-preview {
+    display: block;
+    width: 200px;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    border-radius: 6px;
+    border: 1px solid rgba(0,0,0,0.1);
+}
+
+.camera-off-image-preview.hidden { display: none; }
 
 /* 最近使った画像 */
 .bg-history-section {
