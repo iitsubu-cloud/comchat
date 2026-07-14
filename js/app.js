@@ -66,6 +66,8 @@ class ComChat {
         this._onDeviceChange = null; // デバイス設定モーダル表示中のみ購読するdevicechangeハンドラ
         this.isLeaving = false;
         this.isReconnecting = false;
+        this._hostReconnecting = false; // ホスト再接続ループ(startHostReconnect)の二重起動防止フラグ
+        this.HOST_RECONNECT_MAX_ATTEMPTS = 3; // ホスト再接続の最大試行回数(テストから調整できるようフィールド化)
         // 発話インジケーター(active speaker detection)
         this.speakingAudioContext = null;   // 解析専用のAudioContext(通話開始時に生成)
         this.speakingAnalysers = new Map();  // id('local'|peerId) -> { analyser, source, data, speaking, quietSince }
@@ -127,7 +129,7 @@ class ComChat {
 
         // ヘッダーのロゴ右に表示するユーザー向けバージョン。stableタグ付与時に更新し、
         // 実機確認待ちの間はβを付ける
-        this.APP_VERSION = 'v4.18β';
+        this.APP_VERSION = 'v4.19β';
 
         // コントロールバーの並べ替え(左利き対応・編集モード)
         this.CONTROL_ORDER_STORAGE_KEY = 'comchat-control-order';
@@ -551,6 +553,19 @@ class ComChat {
             if (this._lastSyncRequest && now - this._lastSyncRequest < 2000) return; // 連発抑止
             this._lastSyncRequest = now;
             this.broadcast({ type: 'state-sync-request' });
+            // フォアグラウンド復帰時のゾンビ接続点検。iOS Safariのサスペンドでは、タブが
+            // 凍結されている間はcloseイベントが発火しないまま接続だけ死んでいることがある
+            // (画面ロック・バックグラウンド長期化等)。'disconnected'はICEが自己回復しうる
+            // ため対象にせず、明確に死んだ状態(接続が消えている/failed/closed)の場合だけ
+            // 保守的に猶予付き再接続(startHostReconnect)へ入る
+            if (!this.isHost && this.roomId && this.callStartTime && !this._hostReconnecting) {
+                const hostConn = this.connections.get(this.roomId);
+                const st = hostConn?.peerConnection?.connectionState;
+                if (!hostConn || st === 'failed' || st === 'closed') {
+                    if (hostConn) this.cleanupPeer(this.roomId, { quietReconnect: true });
+                    this.startHostReconnect();
+                }
+            }
         });
     }
 
@@ -1084,6 +1099,74 @@ class ComChat {
         });
     }
 
+    // シグナリングサーバーへの再接続(peer.disconnected状態からの復旧)を待つ。復旧処理自体は
+    // peer.on('disconnected')側のattemptReconnectが担うので、ここでは自分からpeer.reconnect()は
+    // 呼ばず、500ms間隔・最大8秒だけ様子を見る。時間内に復旧しなければ呼び出し元の試行を
+    // 1回の失敗として扱ってもらう(シグナリングが死んでいる間はconnectToHostしても無駄なため)
+    _waitForSignaling() {
+        return new Promise((resolve) => {
+            if (!this.peer || !this.peer.disconnected) { resolve(); return; }
+            let waited = 0;
+            const check = () => {
+                if (!this.peer || !this.peer.disconnected || waited >= 8000) { resolve(); return; }
+                waited += 500;
+                setTimeout(check, 500);
+            };
+            setTimeout(check, 500);
+        });
+    }
+
+    // ホストとのデータ接続が切れた際の猶予付き再接続。自分側要因(画面ロック・バックグラウンド化・
+    // Wi-Fi瞬断)によるcloseとホスト退出によるcloseをイベント単体では区別できないため、即座に
+    // 「ホストが退出した」と断定せず、まずここで数回だけ再ダイヤルを試みる。ホスト側の
+    // handleConnectionは同一ピアIDの再接続を静かに受け入れる設計なので、再接続に成功すれば
+    // 状態同期・peer-list経由の他メンバーへの再ダイヤル・メディアコールは既存の経路が自動的に処理する
+    async startHostReconnect() {
+        if (this._hostReconnecting || this.isLeaving || !this.peer) return;
+        this._hostReconnecting = true;
+        this.showStatus('ホストとの接続が切れました。再接続しています…', 'error');
+        let failReason = null;
+        for (let attempt = 0; attempt < this.HOST_RECONNECT_MAX_ATTEMPTS; attempt++) {
+            // ユーザーが退室した/room-closedで既にhangup済みなら、進行中のループはここで自然に止まる
+            if (this.isLeaving || !this.peer || this.peer.destroyed) {
+                this._hostReconnecting = false;
+                return;
+            }
+            await this._waitForSignaling();
+            if (this.isLeaving || !this.peer || this.peer.destroyed) {
+                this._hostReconnecting = false;
+                return;
+            }
+            try {
+                await this.connectToHost(this.roomId);
+                this._hostReconnecting = false;
+                this.showStatus('再接続しました', 'connected');
+                return;
+            } catch (err) {
+                const msg = (err && err.message) || '';
+                // 満員・ロックは再試行しても結果が変わらないため、ここで即座にループを抜ける
+                if (msg.includes('満員')) { failReason = 'full'; break; }
+                if (msg.includes('ロック')) { failReason = 'locked'; break; }
+                // それ以外(タイムアウト=ホスト不在等)は少し待って次の試行へ
+                failReason = 'timeout';
+                if (attempt < this.HOST_RECONNECT_MAX_ATTEMPTS - 1) {
+                    await new Promise((resolve) => setTimeout(resolve, 1500));
+                }
+            }
+        }
+        this._hostReconnecting = false;
+        // ここに来る間にユーザーが退室していれば何もしない
+        if (this.isLeaving || !this.peer) return;
+        this.hangup();
+        if (failReason === 'full') {
+            this.showStatus('ルームが満員のため再接続できませんでした', 'error');
+        } else if (failReason === 'locked') {
+            this.showStatus('ルームがロックされているため再接続できませんでした', 'error');
+        } else {
+            this.showStatus('ホストとの接続を回復できませんでした。ルームは終了しました', 'error');
+        }
+    }
+
     connectToPeer(peerId) {
         if (this.connections.has(peerId)) return;
         const conn = this.peer.connect(peerId);
@@ -1168,11 +1251,14 @@ class ComChat {
             // 掃除済みの旧接続(同一ピアIDで再接続済み)の遅延イベントが、確立済みの
             // 新しい接続のエントリを巻き添え削除しないようにする(handleCallのstaleガードと対)
             if (this.connections.get(conn.peer) !== conn) return;
-            // ホストとの接続が切れたらルームは終了(ルームID=ホストのPeer IDなので以後
-            // 誰も参加できない死んだルームになる。退室ボタン・タブ閉じ・回線断すべて対象)
+            // ホストとのデータ接続closeは、ホスト明示退出だけでなく自分側要因(画面ロック・
+            // Safariのバックグラウンド化・Wi-Fi瞬断)でも同じイベントが発火し、ここだけでは
+            // 区別がつかないため即断しない。猶予付きで再接続を試み(startHostReconnect)、
+            // 本物のホスト明示退出はroom-closedメッセージが先に届いてhangup済みになる
+            // (handleDataMessageのroom-closed参照)。再接続もできなければ最終的にそちらでhangup()する
             if (!this.isLeaving && !this.isHost && conn.peer === this.roomId) {
-                this.hangup();
-                this.showStatus('ホストが退出したためルームは終了しました', 'error');
+                this.cleanupPeer(conn.peer, { quietReconnect: true });
+                this.startHostReconnect();
                 return;
             }
             const leftName = this.usernames.get(conn.peer); // 削除前に名前を確保(退出通知で使う)
@@ -1232,11 +1318,14 @@ class ComChat {
             // 掃除済みの旧接続(同一ピアIDで再接続済み)の遅延イベントが、確立済みの
             // 新しい接続のエントリを巻き添え削除しないようにする(handleCallのstaleガードと対)
             if (this.connections.get(conn.peer) !== conn) return;
-            // ホストとの接続が切れたらルームは終了(ルームID=ホストのPeer IDなので以後
-            // 誰も参加できない死んだルームになる。退室ボタン・タブ閉じ・回線断すべて対象)
+            // ホストとのデータ接続closeは、ホスト明示退出だけでなく自分側要因(画面ロック・
+            // Safariのバックグラウンド化・Wi-Fi瞬断)でも同じイベントが発火し、ここだけでは
+            // 区別がつかないため即断しない。猶予付きで再接続を試み(startHostReconnect)、
+            // 本物のホスト明示退出はroom-closedメッセージが先に届いてhangup済みになる
+            // (handleDataMessageのroom-closed参照)。再接続もできなければ最終的にそちらでhangup()する
             if (!this.isLeaving && !this.isHost && conn.peer === this.roomId) {
-                this.hangup();
-                this.showStatus('ホストが退出したためルームは終了しました', 'error');
+                this.cleanupPeer(conn.peer, { quietReconnect: true });
+                this.startHostReconnect();
                 return;
             }
             const leftName = this.usernames.get(conn.peer); // 削除前に名前を確保(退出通知で使う)
@@ -4759,6 +4848,9 @@ class ComChat {
     hangup() {
         this.isLeaving = true;
         this.isReconnecting = false;
+        // 進行中のstartHostReconnectループはisLeaving/peerチェックで自然に止まるが、
+        // フラグ自体はここで確実に戻しておく(hangup後に再入室した際、再接続が起動できるように)
+        this._hostReconnecting = false;
         // デバイス設定モーダルを開いたまま退室された場合、devicechangeの購読が残らないよう閉じる
         this.closeDeviceModal();
         // 録音中なら退室前に必ず停止する(broadcastがまだ生きている＝peer-leaving/room-closed
