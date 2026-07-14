@@ -1629,6 +1629,50 @@ body {
 
 .camera-off-image-preview.hidden { display: none; }
 
+/* カメラオフ画像アップロード後の構図調整UI。プレビューと同じ200px×16:9枠内で
+   ドラッグ(位置)・スライダー/ピンチ(拡大縮小)により構図を決め、決定時に640x360へ焼き込む */
+.camera-off-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.camera-off-editor-frame {
+    width: 200px;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    position: relative;
+    touch-action: none; /* ブラウザ標準のスクロール/ピンチズームを止め、自前のドラッグ・ピンチに使う */
+    background: #000;
+    border-radius: 6px;
+    cursor: grab;
+}
+
+.camera-off-editor-img {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: auto;
+    user-select: none;
+    -webkit-user-drag: none;
+    pointer-events: none; /* ドラッグ・ピンチは親フレーム側で受けるため画像自体はイベントを透過させる */
+}
+
+.camera-off-zoom {
+    width: 200px;
+}
+
+.camera-off-editor-actions {
+    display: flex;
+    gap: 8px;
+}
+
+/* 決定/キャンセルは横並び半々にしたいので、.bg-upload-btnの幅100%指定を上書きする */
+.camera-off-editor-actions .bg-upload-btn {
+    width: auto;
+    flex: 1;
+}
+
 /* 最近使った画像 */
 .bg-history-section {
     border-top: 1px solid #e9ecef;

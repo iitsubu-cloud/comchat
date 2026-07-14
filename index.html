@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Klee+One:wght@400;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/style.css?v=67">
+    <link rel="stylesheet" href="css/style.css?v=68">
     <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>">
 </head>
 <body>
@@ -384,6 +384,20 @@
         <button id="camera-off-upload-btn" class="bg-upload-btn">アップロード</button>
         <input type="file" id="camera-off-upload-input" accept="image/*" style="display:none">
         <button id="camera-off-remove-btn" class="bg-upload-btn hidden">画像を削除</button>
+
+        <!-- アップロード直後の構図調整UI。タイル表示(object-fit:cover)と同じ16:9枠内で
+             ドラッグ・ズームして決定すると640x360へ焼き込むので、配布後の受信側・
+             タイル描画側は無編集のdataURLをそのまま扱う既存フローのままでよい -->
+        <div id="camera-off-editor" class="camera-off-editor hidden">
+            <div id="camera-off-editor-frame" class="camera-off-editor-frame">
+                <img id="camera-off-editor-img" class="camera-off-editor-img" draggable="false" alt="">
+            </div>
+            <input type="range" id="camera-off-zoom" class="camera-off-zoom" min="1" max="3" step="0.01" value="1">
+            <div class="camera-off-editor-actions">
+                <button type="button" id="camera-off-editor-cancel" class="bg-upload-btn">キャンセル</button>
+                <button type="button" id="camera-off-editor-confirm" class="bg-upload-btn">決定</button>
+            </div>
+        </div>
     </div>
 
     <!-- 退室確認モーダル -->
@@ -438,7 +452,7 @@
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
     <script src="js/vendor/qrcode.js"></script>
-    <script src="js/app.js?v=129"></script>
+    <script src="js/app.js?v=130"></script>
 
     <script>
         // タブを閉じる/ページ遷移時にリソースだけ解放（UI操作は不要）

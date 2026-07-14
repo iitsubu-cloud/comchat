@@ -3627,6 +3627,7 @@ class ComChat {
         this.cameraOffImagePanel.addEventListener('click', (e) => e.stopPropagation());
         this.cameraOffImagePreview = document.getElementById('camera-off-image-preview');
         this.cameraOffRemoveBtn = document.getElementById('camera-off-remove-btn');
+        this.cameraOffUploadBtn = document.getElementById('camera-off-upload-btn');
 
         // 設定は端末に永続化する(ユーザー設定なので次回以降の通話でも有効にするため)
         try {
@@ -3635,23 +3636,16 @@ class ComChat {
         } catch {}
         this.renderCameraOffImagePreview();
 
-        const uploadBtn = document.getElementById('camera-off-upload-btn');
         const uploadInput = document.getElementById('camera-off-upload-input');
-        uploadBtn.addEventListener('click', (e) => { e.stopPropagation(); uploadInput.click(); });
+        this.cameraOffUploadBtn.addEventListener('click', (e) => { e.stopPropagation(); uploadInput.click(); });
         uploadInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file) return;
             e.target.value = '';
             try {
-                const dataURL = await this.resizeCameraOffImageToDataURL(file);
-                // 低画質再試行後もなお大きい場合はデータチャネル配布・保存のコストを考えて諦める
-                if (dataURL.length > 400000) {
-                    this.showStatus('画像が大きすぎます', 'error');
-                    return;
-                }
-                this.setCameraOffImage(dataURL);
-                this.cameraOffImagePanel.classList.add('hidden');
-                this.showStatus('カメラオフ時の画像を設定しました', 'connected');
+                // 選択直後にsetCameraOffImageへは渡さず、まず構図調整エディタを開く
+                // (焼き込みはconfirmCameraOffImageEditで行う)
+                await this.startCameraOffImageEdit(file);
             } catch (err) {
                 console.warn('Failed to load camera-off image:', err);
             }
@@ -3663,6 +3657,8 @@ class ComChat {
             this.cameraOffImagePanel.classList.add('hidden');
             this.showStatus('カメラオフ時の画像を解除しました', 'connected');
         });
+
+        this.initCameraOffImageEditor();
     }
 
     renderCameraOffImagePreview() {
@@ -3695,15 +3691,16 @@ class ComChat {
         this.renderCameraOffImagePreview();
     }
 
-    // ファイル選択→縮小(長辺最大640px)→JPEG化。既定品質0.8で大きすぎる場合のみ0.6で
-    // 再エンコードする(データチャネル配布とlocalStorage保存の両方でペイロードを抑えるため)
-    resizeCameraOffImageToDataURL(file) {
+    // ファイル選択→編集用に長辺最大1280pxへ事前縮小(巨大写真をそのまま扱うと
+    // iPhone等でのドラッグ描画・メモリ負荷が大きいため。最終出力は640x360なので
+    // 1280あれば画質は落ちない)→構図調整エディタを開く
+    startCameraOffImageEdit(file) {
         return new Promise((resolve, reject) => {
             const img = new Image();
             const url = URL.createObjectURL(file);
             img.onload = () => {
                 URL.revokeObjectURL(url);
-                const maxSide = 640;
+                const maxSide = 1280;
                 let w = img.naturalWidth, h = img.naturalHeight;
                 const longSide = Math.max(w, h);
                 if (longSide > maxSide) {
@@ -3714,18 +3711,201 @@ class ComChat {
                 const canvas = document.createElement('canvas');
                 canvas.width = w; canvas.height = h;
                 canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-                let dataURL = canvas.toDataURL('image/jpeg', 0.8);
-                if (dataURL.length > 400000) {
-                    dataURL = canvas.toDataURL('image/jpeg', 0.6);
-                }
-                resolve(dataURL);
+                // dataURL化してから改めて<img>で読み込む。エディタ用<img>のnaturalWidth/Height
+                // と焼き込み時のdrawImageソースを同じ要素で共有できるようにするため
+                const editImg = new Image();
+                editImg.onload = () => {
+                    this.openCameraOffImageEditor(editImg);
+                    resolve();
+                };
+                editImg.onerror = reject;
+                editImg.src = canvas.toDataURL('image/jpeg', 0.92);
             };
             img.onerror = (err) => { URL.revokeObjectURL(url); reject(err); };
             img.src = url;
         });
     }
 
+    // 構図調整UI(ドラッグ・ピンチ・スライダー)のイベントを一度だけ束縛する。
+    // 実際の編集対象は this._cameraOffEdit の有無で判定するため、パネルの開閉ごとに
+    // つけ外しする必要はない
+    initCameraOffImageEditor() {
+        this.cameraOffEditor = document.getElementById('camera-off-editor');
+        this.cameraOffEditorFrame = document.getElementById('camera-off-editor-frame');
+        this.cameraOffEditorImg = document.getElementById('camera-off-editor-img');
+        this.cameraOffZoomSlider = document.getElementById('camera-off-zoom');
+        const confirmBtn = document.getElementById('camera-off-editor-confirm');
+        const cancelBtn = document.getElementById('camera-off-editor-cancel');
+
+        this._cameraOffEdit = null; // { img, zoom, baseScale, frameW, frameH, imgW, imgH, ox, oy }
+        this._cameraOffPointers = new Map(); // pointerId → 直近のclientX/Y(ピンチ判定に複数点必要)
+        this._cameraOffPinchStartDist = 0;
+        this._cameraOffPinchStartZoom = 1;
+
+        const frame = this.cameraOffEditorFrame;
+
+        frame.addEventListener('pointerdown', (e) => {
+            if (!this._cameraOffEdit) return;
+            frame.setPointerCapture(e.pointerId);
+            this._cameraOffPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            if (this._cameraOffPointers.size === 2) {
+                const pts = [...this._cameraOffPointers.values()];
+                this._cameraOffPinchStartDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+                this._cameraOffPinchStartZoom = this._cameraOffEdit.zoom;
+            }
+        });
+
+        frame.addEventListener('pointermove', (e) => {
+            const st = this._cameraOffEdit;
+            if (!st || !this._cameraOffPointers.has(e.pointerId)) return;
+            const prev = this._cameraOffPointers.get(e.pointerId);
+            const cur = { x: e.clientX, y: e.clientY };
+            this._cameraOffPointers.set(e.pointerId, cur);
+
+            if (this._cameraOffPointers.size >= 2) {
+                // ピンチ: 2点間距離の変化率をzoomへ反映。中点固定までは行わず
+                // フレーム中心を不動点にする(スライダーと同じ簡易ロジックに統一)
+                const pts = [...this._cameraOffPointers.values()];
+                const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+                if (this._cameraOffPinchStartDist > 0) {
+                    this.setCameraOffEditZoom(this._cameraOffPinchStartZoom * (dist / this._cameraOffPinchStartDist));
+                }
+                return;
+            }
+
+            // 1本指ドラッグ: 位置移動
+            st.ox += cur.x - prev.x;
+            st.oy += cur.y - prev.y;
+            this.clampCameraOffEditOffset();
+            this.renderCameraOffEditTransform();
+        });
+
+        const releasePointer = (e) => {
+            this._cameraOffPointers.delete(e.pointerId);
+            if (this._cameraOffPointers.size < 2) this._cameraOffPinchStartDist = 0;
+        };
+        frame.addEventListener('pointerup', releasePointer);
+        frame.addEventListener('pointercancel', releasePointer);
+
+        this.cameraOffZoomSlider.addEventListener('input', (e) => {
+            if (!this._cameraOffEdit) return;
+            this.setCameraOffEditZoom(parseFloat(e.target.value));
+        });
+
+        cancelBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.closeCameraOffImageEditor();
+        });
+
+        confirmBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.confirmCameraOffImageEdit();
+        });
+    }
+
+    // 編集セクションを開き、cover基準(baseScale)で中央配置した初期状態にする。
+    // 既存のプレビュー/アップロード/削除ボタンは編集中隠す
+    openCameraOffImageEditor(editImg) {
+        this.cameraOffImagePreview.classList.add('hidden');
+        this.cameraOffUploadBtn.classList.add('hidden');
+        this.cameraOffRemoveBtn.classList.add('hidden');
+        this.cameraOffEditor.classList.remove('hidden');
+
+        this.cameraOffEditorImg.src = editImg.src;
+        const rect = this.cameraOffEditorFrame.getBoundingClientRect();
+        const frameW = rect.width, frameH = rect.height;
+        const imgW = editImg.naturalWidth, imgH = editImg.naturalHeight;
+        const baseScale = Math.max(frameW / imgW, frameH / imgH);
+        this._cameraOffEdit = {
+            img: editImg,
+            zoom: 1,
+            baseScale,
+            frameW, frameH, imgW, imgH,
+            ox: (frameW - imgW * baseScale) / 2,
+            oy: (frameH - imgH * baseScale) / 2,
+        };
+        this.cameraOffZoomSlider.value = 1;
+        this.renderCameraOffEditTransform();
+    }
+
+    // キャンセル、および安全網(パネルが編集中に閉じられた場合)から呼ぶ。
+    // 編集状態を破棄して通常表示(プレビュー/アップロード/削除)に戻す。パネル自体は閉じない
+    closeCameraOffImageEditor() {
+        this._cameraOffEdit = null;
+        this._cameraOffPointers.clear();
+        this._cameraOffPinchStartDist = 0;
+        this.cameraOffEditor.classList.add('hidden');
+        this.cameraOffEditorImg.removeAttribute('src');
+        this.cameraOffUploadBtn.classList.remove('hidden');
+        this.renderCameraOffImagePreview(); // プレビュー/削除ボタンの表示はcameraOffImageの有無に従わせる
+    }
+
+    // ズーム変更の共通処理。フレーム中心を不動点にox/oyを再計算してからクランプする
+    setCameraOffEditZoom(newZoom) {
+        const st = this._cameraOffEdit;
+        if (!st) return;
+        const clamped = Math.min(3, Math.max(1, newZoom));
+        const oldS = st.baseScale * st.zoom;
+        const newS = st.baseScale * clamped;
+        const cx = st.frameW / 2, cy = st.frameH / 2;
+        st.ox = cx - (cx - st.ox) * (newS / oldS);
+        st.oy = cy - (cy - st.oy) * (newS / oldS);
+        st.zoom = clamped;
+        this.clampCameraOffEditOffset();
+        this.cameraOffZoomSlider.value = clamped;
+        this.renderCameraOffEditTransform();
+    }
+
+    // 画像がフレームを常に完全に覆うようox/oyをクランプする(隙間ができないように)
+    clampCameraOffEditOffset() {
+        const st = this._cameraOffEdit;
+        if (!st) return;
+        const s = st.baseScale * st.zoom;
+        const minOx = st.frameW - st.imgW * s;
+        const minOy = st.frameH - st.imgH * s;
+        st.ox = Math.min(0, Math.max(minOx, st.ox));
+        st.oy = Math.min(0, Math.max(minOy, st.oy));
+    }
+
+    renderCameraOffEditTransform() {
+        const st = this._cameraOffEdit;
+        if (!st) return;
+        const s = st.baseScale * st.zoom;
+        this.cameraOffEditorImg.style.left = st.ox + 'px';
+        this.cameraOffEditorImg.style.top = st.oy + 'px';
+        this.cameraOffEditorImg.style.width = (st.imgW * s) + 'px';
+    }
+
+    // 決定: フレームに映っている領域をそのまま640x360へ焼き込んでから既存フロー
+    // (setCameraOffImage)に渡す。配布プロトコル・受信側・タイル描画には一切触れない
+    confirmCameraOffImageEdit() {
+        const st = this._cameraOffEdit;
+        if (!st) return;
+        const s = st.baseScale * st.zoom;
+        const sx = -st.ox / s, sy = -st.oy / s;
+        const sw = st.frameW / s, sh = st.frameH / s;
+        const canvas = document.createElement('canvas');
+        canvas.width = 640; canvas.height = 360;
+        canvas.getContext('2d').drawImage(st.img, sx, sy, sw, sh, 0, 0, 640, 360);
+        let dataURL = canvas.toDataURL('image/jpeg', 0.8);
+        if (dataURL.length > 400000) {
+            dataURL = canvas.toDataURL('image/jpeg', 0.6);
+        }
+        // 低画質再試行後もなお大きい場合はデータチャネル配布・保存のコストを考えて諦める
+        if (dataURL.length > 400000) {
+            this.showStatus('画像が大きすぎます', 'error');
+            return;
+        }
+        this.closeCameraOffImageEditor();
+        this.setCameraOffImage(dataURL);
+        this.cameraOffImagePanel.classList.add('hidden');
+        this.showStatus('カメラオフ時の画像を設定しました', 'connected');
+    }
+
     showCameraOffImagePanel() {
+        // パネルは外側クリック等で編集中でも閉じられてしまうため、開き直す前に
+        // 編集状態をリセットして通常表示(プレビュー等)に戻しておく
+        if (this._cameraOffEdit) this.closeCameraOffImageEditor();
         // 通話中のみ開く(プレコールでは呼ばれない想定)。位置基準は他の「その他」メニュー内
         // パネルと同じく#more-btn(常時表示・安定した要素)
         const rect = this.moreBtn.getBoundingClientRect();
