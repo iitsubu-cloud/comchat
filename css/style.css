@@ -1363,6 +1363,14 @@ body {
     margin: 2px 0;
 }
 
+/* その他メニューのグループ区切り(設定系/映像の見た目/よく使う操作の3グループを視覚化)。
+   reaction-panel-dividerと同じデザイン語彙で揃える */
+.more-menu-divider {
+    height: 1px;
+    background: #e2e2e2;
+    margin: 2px 0;
+}
+
 .hand-toggle-btn {
     border: none;
     border-radius: 8px;
@@ -2359,6 +2367,10 @@ body.in-call .reaction-emoji-btn:hover {
 }
 
 body.in-call .reaction-panel-divider {
+    background: #374151;
+}
+
+body.in-call .more-menu-divider {
     background: #374151;
 }
 
