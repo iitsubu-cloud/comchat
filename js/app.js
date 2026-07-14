@@ -144,7 +144,40 @@ class ComChat {
         this.initializeUI();
     }
 
+    // ドラッグ&ドロップ受付の共通束縛。dragenter/dragleaveは子要素の出入りでも
+    // 発火してしまうため、カウンタ方式(enterで+1・leaveで-1・dropで0リセット)で
+    // drag-overクラスの付け外しを安定させる。dragoverは毎フレーム発火するため
+    // ここではpreventDefaultのみ行いクラス操作はしない
+    _bindDropZone(el, onDrop) {
+        let counter = 0;
+        el.addEventListener('dragenter', (e) => {
+            e.preventDefault();
+            counter++;
+            el.classList.add('drag-over');
+        });
+        el.addEventListener('dragover', (e) => {
+            e.preventDefault();
+        });
+        el.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            counter = Math.max(0, counter - 1);
+            if (counter === 0) el.classList.remove('drag-over');
+        });
+        el.addEventListener('drop', (e) => {
+            e.preventDefault();
+            counter = 0;
+            el.classList.remove('drag-over');
+            onDrop(e);
+        });
+    }
+
     initializeUI() {
+        // ページ全体でのドロップ事故防止: ドロップゾーン外にファイルを落とすと
+        // ブラウザ既定動作でそのファイルがページとして開かれ、通話画面ごと吹き飛ぶため
+        // documentレベルでdragover/dropを捕捉しpreventDefaultしておく
+        document.addEventListener('dragover', (e) => e.preventDefault());
+        document.addEventListener('drop', (e) => e.preventDefault());
+
         // ヘッダーのロゴ右にバージョンを表示
         const logoVersionEl = document.getElementById('logo-version');
         if (logoVersionEl) logoVersionEl.textContent = this.APP_VERSION;
@@ -497,6 +530,26 @@ class ComChat {
         this.fileInput.addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (file) { this.sendFile(file); e.target.value = ''; }
+        });
+
+        // チャット欄へのファイルドロップ(📎ボタン以外のもう一つの送信入口)。
+        // .chat-containerは通話画面内にしか存在しないため通話中のみ有効になるが、
+        // 念のためpeer未確立(通話外)なら何もしない
+        this._bindDropZone(this.chatContainer, (e) => {
+            if (!this.peer) return;
+            const files = e.dataTransfer.files;
+            if (!files || files.length === 0) return; // テキスト等のドロップは無視
+            if (this.isSendingFile) {
+                // 📎ボタンは送信中disabledになるが、D&Dの入口(chat-container全体)は
+                // 常時開いているため、無視ではなく理由を伝える
+                this.showStatus('送信中のファイルが完了してから送ってください', 'error');
+                return;
+            }
+            if (files.length > 1) {
+                this.showStatus('1ファイルずつ送信できます（最初の1件を送信します）', 'connected');
+            }
+            // サイズ上限等の検証はsendFile内の既存処理に任せる
+            this.sendFile(files[0]);
         });
 
         // Pre-call settings dialog
@@ -3745,6 +3798,24 @@ class ComChat {
             this.removeCameraOffImage();
             this.cameraOffImagePanel.classList.add('hidden');
             this.showStatus('カメラオフ時の画像を解除しました', 'connected');
+        });
+
+        // カメラオフ画像パネルへの画像ドロップ(通常状態・編集中どちらでも受け付ける)。
+        // 編集中に新しい画像をドロップした場合もstartCameraOffImageEditが状態を
+        // 作り直すため、ここで追加の分岐は不要
+        this._bindDropZone(this.cameraOffImagePanel, async (e) => {
+            const files = e.dataTransfer.files;
+            if (!files || files.length === 0) return;
+            const file = files[0];
+            if (!file.type.startsWith('image/')) {
+                this.showStatus('画像ファイルをドロップしてください', 'error');
+                return;
+            }
+            try {
+                await this.startCameraOffImageEdit(file);
+            } catch (err) {
+                console.warn('Failed to load camera-off image:', err);
+            }
         });
 
         this.initCameraOffImageEditor();
