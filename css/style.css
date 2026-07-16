@@ -1815,6 +1815,37 @@ body {
     height: 38px;
 }
 
+/* カメラオフ時のカスタム画像プレビュー。通話中タイル(.camera-off-avatar)と
+   同じ規則(画像があれば全面表示)で「入室後に相手からどう見えるか」を再現する */
+.precall-off-image {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    background: #000;
+    pointer-events: none;
+}
+
+/* カメラオフ時、カスタム画像未設定の人の名前表示(通話中の.video-center-nameに準ずる) */
+.precall-off-name {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 1.4em;
+    font-weight: 600;
+    text-shadow: 0 1px 6px rgba(0, 0, 0, 0.7);
+    pointer-events: none;
+    white-space: nowrap;
+    padding: 0 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .precall-controls {
     display: flex;
     justify-content: center;

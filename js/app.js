@@ -129,7 +129,7 @@ class ComChat {
 
         // ヘッダーのロゴ右に表示するユーザー向けバージョン。stableタグ付与時に更新し、
         // 実機確認待ちの間はβを付ける
-        this.APP_VERSION = 'v4.21β';
+        this.APP_VERSION = 'v4.22β';
 
         // コントロールバーの並べ替え(左利き対応・編集モード)
         this.CONTROL_ORDER_STORAGE_KEY = 'comchat-control-order';
@@ -558,6 +558,8 @@ class ComChat {
         this.precallDialog = document.getElementById('precall-dialog');
         this.precallPreview = document.getElementById('precall-preview');
         this.precallNoCamera = document.getElementById('precall-no-camera');
+        this.precallOffImage = document.getElementById('precall-off-image');
+        this.precallOffName = document.getElementById('precall-off-name');
         this.precallVideoBtn = document.getElementById('precall-video-btn');
         this.precallAudioBtn = document.getElementById('precall-audio-btn');
         this.precallFilterBtn = document.getElementById('precall-filter-btn');
@@ -4782,7 +4784,8 @@ class ComChat {
             if (!this.canUseBgFilter()) return;
 
             if (pref.type === 'blur') {
-                this.applyBgFilter('blur');
+                await this.applyBgFilter('blur');
+                this._blackFillIfPrecallCameraOff();
                 return;
             }
 
@@ -4801,7 +4804,8 @@ class ComChat {
                     this.bgImage.close();
                 }
                 this.bgImage = bm;
-                this.applyBgFilter('image');
+                await this.applyBgFilter('image');
+                this._blackFillIfPrecallCameraOff();
                 return;
             }
 
@@ -4815,9 +4819,23 @@ class ComChat {
                     this.bgImage.close();
                 }
                 this.bgImage = bm;
-                this.applyBgFilter('image');
+                await this.applyBgFilter('image');
+                this._blackFillIfPrecallCameraOff();
             }
         } catch {}
+    }
+
+    // restoreBgFilterPref専用の後処理: カメラオフ状態のままフィルター復元が完走した場合、
+    // 手動オフ時(precallToggleVideo)と同じくループを止めて黒塗りする。カメラオフ復元(変更1)と
+    // フィルター復元(fire-and-forget)が並走した際、disabledトラックに対して描画ループが
+    // 起動したまま残ってしまうのを防ぐための穴埋め
+    _blackFillIfPrecallCameraOff() {
+        const camTrack = this.localStream?.getVideoTracks()[0];
+        if (camTrack && !camTrack.enabled && this.bgFilterType !== 'none' && this.bgFilterCtx && this.bgFilterCanvas) {
+            this.stopBgFilterLoop();
+            this.bgFilterCtx.fillStyle = '#000';
+            this.bgFilterCtx.fillRect(0, 0, this.bgFilterCanvas.width, this.bgFilterCanvas.height);
+        }
     }
 
     // プリコールダイアログ内にステータスメッセージを表示（3秒後に自動消去）
@@ -4866,6 +4884,19 @@ class ComChat {
         this.filterPanel.querySelectorAll('.filter-option').forEach(el => {
             el.classList.toggle('active', el.dataset.filter === 'none');
         });
+
+        // 前回のカメラ・マイクのオン/オフ状態を復元する。必ず既存のトグル関数経由で
+        // 行うこと(ボタンのoffクラス・precallNoCamera表示・isAudioMuted・フィルター連動・
+        // 入室後のin-call UIへの引き継ぎが、手動オフで実証済みの経路にそのまま乗るため)。
+        // この時点ではbgFilterType==='none'なのでトグル内のフィルター分岐は素通りし安全
+        try {
+            const savedMediaPref = localStorage.getItem('comchat_media_pref');
+            if (savedMediaPref) {
+                const mediaPref = JSON.parse(savedMediaPref);
+                if (mediaPref && mediaPref.video === false) this.precallToggleVideo();
+                if (mediaPref && mediaPref.audio === false) this.precallToggleAudio();
+            }
+        } catch {}
 
         // Show preview (hidden initially until video loads)
         this.precallPreview.srcObject = this.localStream;
@@ -4936,6 +4967,9 @@ class ComChat {
         });
         this.precallNoCamera.classList.remove('hidden');
         this.precallNoCamera.querySelector('span').textContent = 'カメラを起動中...';
+        this.precallOffImage.classList.add('hidden');
+        this.precallOffImage.removeAttribute('src');
+        this.precallOffName.classList.add('hidden');
     }
 
     async confirmPreCall() {
@@ -4943,6 +4977,18 @@ class ComChat {
         if (this.username && this.username !== 'ユーザー') {
             try { localStorage.setItem('comchat_username', this.username); } catch {}
         }
+        // カメラ・マイクのオン/オフ状態を次回セッションへ引き継ぐ。保存はここ(実際に
+        // 参加が確定した瞬間)のみに限定すること。トグル操作時やcancelPreCall・hangup等の
+        // 内部的な状態遷移で保存してしまうと、意図せず設定が上書き・消滅する事故につながる
+        // (saveBgFilterPrefと同じ設計思想)
+        try {
+            const videoTrack = this.localStream?.getVideoTracks()[0];
+            const audioTrack = this.localStream?.getAudioTracks()[0];
+            localStorage.setItem('comchat_media_pref', JSON.stringify({
+                video: videoTrack ? videoTrack.enabled : true,
+                audio: audioTrack ? audioTrack.enabled : true
+            }));
+        } catch {}
         // 通知音用AudioContextはここ(クリック直後・await前=ユーザー操作の文脈内)で生成する。
         // showCallScreen到達時はgetUserMedia等の複数awaitの後で、自動再生ポリシー上
         // suspendedのまま作られて入退室音が一切鳴らない恐れがあるため
@@ -4958,11 +5004,39 @@ class ComChat {
         this.filterPanel.classList.add('hidden');
         if (this.bgImagePanel) this.bgImagePanel.classList.add('hidden');
         this.precallPreview.srcObject = null;
+        this.precallOffImage.classList.add('hidden');
+        this.precallOffImage.removeAttribute('src');
+        this.precallOffName.classList.add('hidden');
 
         if (action === 'create') {
             await this.createRoom();
         } else {
             await this.joinRoom();
+        }
+    }
+
+    // プレコールのカメラオフ表示を通話中タイル(updateCameraOffVisual)と同じ規則にする。
+    // カメラオン時は#precall-no-camera(起動中/起動失敗表示に使われる)には触れない。
+    // カメラオフ時のみ、カメラオフ画像が設定されていればそれを全面表示、なければ
+    // 黒地+ユーザー名を表示し、#precall-no-cameraのsvg+テキストは隠して置き換える
+    updatePrecallCameraOffVisual() {
+        const track = this.localStream?.getVideoTracks()[0];
+        const isOff = !!track && !track.enabled;
+        if (!isOff) {
+            this.precallOffImage.classList.add('hidden');
+            this.precallOffImage.removeAttribute('src');
+            this.precallOffName.classList.add('hidden');
+            return;
+        }
+        this.precallNoCamera.classList.add('hidden');
+        if (this.cameraOffImage) {
+            this.precallOffImage.src = this.cameraOffImage;
+            this.precallOffImage.classList.remove('hidden');
+            this.precallOffName.classList.add('hidden');
+        } else {
+            this.precallOffName.textContent = this.username || 'ユーザー';
+            this.precallOffName.classList.remove('hidden');
+            this.precallOffImage.classList.add('hidden');
         }
     }
 
@@ -4972,10 +5046,7 @@ class ComChat {
         if (!track) return;
         track.enabled = !track.enabled;
         this.precallVideoBtn.classList.toggle('off', !track.enabled);
-        this.precallNoCamera.classList.toggle('hidden', track.enabled);
-        if (!track.enabled) {
-            this.precallNoCamera.querySelector('span').textContent = 'カメラオフ';
-        }
+        this.updatePrecallCameraOffVisual();
         if (this.bgFilterType !== 'none' && this.bgFilterCtx && this.bgFilterCanvas) {
             if (!track.enabled) {
                 this.stopBgFilterLoop();
