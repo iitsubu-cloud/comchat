@@ -129,7 +129,7 @@ class ComChat {
 
         // ヘッダーのロゴ右に表示するユーザー向けバージョン。stableタグ付与時に更新し、
         // 実機確認待ちの間はβを付ける
-        this.APP_VERSION = 'v4.20β';
+        this.APP_VERSION = 'v4.21β';
 
         // コントロールバーの並べ替え(左利き対応・編集モード)
         this.CONTROL_ORDER_STORAGE_KEY = 'comchat-control-order';
@@ -415,6 +415,8 @@ class ComChat {
             if (filter === 'image') {
                 this.showBgImagePanel();
             } else {
+                // ユーザーがパネルで明示的に選んだ操作のみ保存する(none/blur)
+                this.saveBgFilterPref({ type: filter });
                 this.applyBgFilter(filter);
             }
         });
@@ -1853,6 +1855,10 @@ class ComChat {
         const newName = this.usernameEditInput.value.trim();
         if (newName && newName !== this.username) {
             this.username = newName;
+            // ユーザー名を次回セッションへ引き継ぐ(空欄やデフォルト名は保存しない)
+            if (this.username && this.username !== 'ユーザー') {
+                try { localStorage.setItem('comchat_username', this.username); } catch {}
+            }
             // ローカルタイルには品質バーがないため通常はフォールバックで足りるが、
             // 構造を統一するため .video-label-name を優先して書き換える
             const localLabelName = document.querySelector('#video-local .video-label .video-label-name');
@@ -3620,6 +3626,8 @@ class ComChat {
                 }
                 this.bgImage = newBitmap;
                 this.bgImagePanel.classList.add('hidden');
+                // ユーザーがパネルで明示的に選んだ操作のみ保存する
+                this.saveBgFilterPref({ type: 'image', preset: name });
                 this.applyBgFilter('image');
             });
         });
@@ -3643,6 +3651,8 @@ class ComChat {
                 }
                 this.bgImage = newBitmap;
                 this.bgImagePanel.classList.add('hidden');
+                // ユーザーがパネルで明示的に選んだ操作のみ保存する
+                this.saveBgFilterPref({ type: 'image', dataURL });
                 this.applyBgFilter('image');
             } catch (err) {
                 console.warn('Failed to load background image:', err);
@@ -3738,6 +3748,8 @@ class ComChat {
                 }
                 this.bgImage = newBitmap;
                 this.bgImagePanel.classList.add('hidden');
+                // ユーザーがパネルで明示的に選んだ操作のみ保存する
+                this.saveBgFilterPref({ type: 'image', dataURL });
                 this.applyBgFilter('image');
             });
         });
@@ -4747,6 +4759,67 @@ class ComChat {
         return this._bgFilterSupported;
     }
 
+    // 背景フィルターのユーザー選択を端末に永続化する。呼び出し元は「ユーザーが
+    // パネルで選んだ」4箇所のクリックハンドラのみに限定すること。applyBgFilter内部から
+    // 呼んでしまうと、hangup等の内部的な'none'遷移でも設定が上書き・消滅してしまうため
+    saveBgFilterPref(pref) {
+        try {
+            localStorage.setItem('comchat_bg_filter', JSON.stringify(pref));
+        } catch {}
+    }
+
+    // プリコールダイアログを開くたびに前回の背景フィルター設定を復元する。
+    // 端末非対応・データ不正・読み込み失敗などはすべて無言で諦め、プリコールの
+    // 表示自体は妨げない(fire-and-forgetで呼ばれる想定)
+    async restoreBgFilterPref() {
+        try {
+            const saved = localStorage.getItem('comchat_bg_filter');
+            if (!saved) return;
+            const pref = JSON.parse(saved);
+            if (!pref || pref.type === 'none') return;
+            // 非対応端末では毎回警告を出さず黙って諦める(プリコールを開くたび
+            // エラートーストが出てしまうのを防ぐため)
+            if (!this.canUseBgFilter()) return;
+
+            if (pref.type === 'blur') {
+                this.applyBgFilter('blur');
+                return;
+            }
+
+            if (pref.type === 'image' && pref.preset) {
+                if (!this._presetUrl(pref.preset)) return; // 不正なプリセット名は無視
+                const bm = await this.generatePresetBitmap(pref.preset);
+                // await中にプリコールが閉じられた/カメラが解放された場合は破棄して終了。
+                // bmはbgPresetsにキャッシュされる共有インスタンスのため、closeする前に
+                // 必ずキャッシュから外す(閉じたビットマップが残ると次回のプリセット選択が壊れる)
+                if (this.precallDialog.classList.contains('hidden') || !this.localStream) {
+                    if (this.bgPresets[pref.preset] === bm) delete this.bgPresets[pref.preset];
+                    bm?.close?.();
+                    return;
+                }
+                if (this.bgImage && !Object.values(this.bgPresets).includes(this.bgImage)) {
+                    this.bgImage.close();
+                }
+                this.bgImage = bm;
+                this.applyBgFilter('image');
+                return;
+            }
+
+            if (pref.type === 'image' && typeof pref.dataURL === 'string' && pref.dataURL.startsWith('data:image/')) {
+                const bm = await this.loadBgFromDataURL(pref.dataURL);
+                if (this.precallDialog.classList.contains('hidden') || !this.localStream) {
+                    bm?.close?.();
+                    return;
+                }
+                if (this.bgImage && !Object.values(this.bgPresets).includes(this.bgImage)) {
+                    this.bgImage.close();
+                }
+                this.bgImage = bm;
+                this.applyBgFilter('image');
+            }
+        } catch {}
+    }
+
     // プリコールダイアログ内にステータスメッセージを表示（3秒後に自動消去）
     showPrecallStatus(msg) {
         const el = document.getElementById('precall-status-msg');
@@ -4816,6 +4889,9 @@ class ComChat {
         this.precallPreview.addEventListener('loadeddata', this._precallLoadedHandler, { once: true });
 
         this.precallDialog.classList.remove('hidden');
+        // 前回の背景フィルター設定を復元する(await不要のfire-and-forget。
+        // ダイアログ表示自体を待たせたくないため)
+        this.restoreBgFilterPref();
     }
 
     cancelPreCall() {
@@ -4863,6 +4939,10 @@ class ComChat {
     }
 
     async confirmPreCall() {
+        // ユーザー名を次回セッションへ引き継ぐ(空欄やデフォルト名は保存しない)
+        if (this.username && this.username !== 'ユーザー') {
+            try { localStorage.setItem('comchat_username', this.username); } catch {}
+        }
         // 通知音用AudioContextはここ(クリック直後・await前=ユーザー操作の文脈内)で生成する。
         // showCallScreen到達時はgetUserMedia等の複数awaitの後で、自動再生ポリシー上
         // suspendedのまま作られて入退室音が一切鳴らない恐れがあるため
@@ -5473,6 +5553,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const usernameInput = document.getElementById('username');
     if (usernameInput) {
+        // 前回入力したユーザー名を復元する(maxlength=20と揃えてslice)
+        try {
+            const savedUsername = localStorage.getItem('comchat_username');
+            if (savedUsername) usernameInput.value = savedUsername.slice(0, 20);
+        } catch {}
         window.comChat.username = usernameInput.value || 'ユーザー';
         usernameInput.addEventListener('input', (e) => {
             window.comChat.username = e.target.value || 'ユーザー';

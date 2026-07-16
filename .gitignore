@@ -93,3 +93,5 @@ screenshots/
 # Temporary files created during development
 .tmp/
 .temp/
+# Claude Code local dev config
+.claude/
