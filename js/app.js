@@ -1898,7 +1898,18 @@ class ComChat {
         video.srcObject = stream;
         video.autoplay = true;
         video.playsInline = true; // Required for iOS Safari
-        video.muted = id === 'local';
+        // videoは常にミュート(表示専用)。リモートの音声は下の専用audio要素から再生する。
+        // videoから音声を出すと、相手がカメラオフのまま入室した場合に映像トラックが
+        // フレームを送らず、映像データ待ちで再生自体が始まらない=音声まで出ない
+        // ブラウザがある(Safari等で実機確認)。audio要素は音声データだけで再生を開始できる
+        video.muted = true;
+        let tileAudio = null;
+        if (id !== 'local') {
+            tileAudio = document.createElement('audio');
+            tileAudio.className = 'tile-audio';
+            tileAudio.srcObject = stream;
+            tileAudio.autoplay = true;
+        }
 
         // カメラオフ時の全面画像。visibility:hiddenのvideoの上に重なるが、実際に見えるかは
         // has-imageクラス(updateCameraOffVisualが付与)とタイルのcamera-offクラス次第
@@ -1950,6 +1961,7 @@ class ComChat {
         }
 
         videoContainer.appendChild(video);
+        if (tileAudio) videoContainer.appendChild(tileAudio);
         videoContainer.appendChild(cameraOffAvatar);
         videoContainer.appendChild(labelDiv);
         videoContainer.appendChild(muteIndicator);
@@ -1960,6 +1972,7 @@ class ComChat {
         // タイルがDOMに入った後(appendChild後)・レイアウト計算前に呼ぶ
         this.updateCameraOffVisual(id);
         video.play().catch(() => {});
+        if (tileAudio) tileAudio.play().catch(() => {});
         this.relayoutVideoGrid();
     }
 
@@ -1997,6 +2010,8 @@ class ComChat {
         if (videoElement) {
             const video = videoElement.querySelector('video');
             if (video) video.srcObject = null;
+            const audio = videoElement.querySelector('audio');
+            if (audio) audio.srcObject = null;
             videoElement.remove();
         }
         this.relayoutVideoGrid();
@@ -5617,7 +5632,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Safari autoplay policy: resume paused videos on first user interaction
     document.addEventListener('click', () => {
-        document.querySelectorAll('video').forEach(v => {
+        document.querySelectorAll('video, audio').forEach(v => {
             if (v.paused) v.play().catch(() => {});
         });
     }, { once: true });
