@@ -1498,7 +1498,11 @@ body {
     align-items: center;
     gap: 4px;
     pointer-events: none;
-    animation: reaction-overlay-rise 2.8s ease-out forwards;
+    /* ease-out はアニメ全体ではなく「キーフレーム区間ごと」に適用されるため、
+       区間の境目(0/15/40/70/100%)で毎回ほぼ停止まで減速し2.8秒に3回失速していた。
+       等速(linear)にして失速区間そのものを無くし、横揺れは下のキーフレームで
+       正弦波を直接サンプリングして表現する。★イージングを足し直さないこと */
+    animation: reaction-overlay-rise 2.8s linear forwards;
 }
 
 .reaction-overlay-emoji {
@@ -1519,28 +1523,35 @@ body {
     text-overflow: ellipsis;
 }
 
-/* 横揺れ(--swayでランダム化)＋序盤のポップ(1.15x)＋終盤のフェードアウトで上昇する */
+/* 上昇=等速(5%ごとに-4.6vh)。横揺れ=sin(540°×進捗)を5%刻みで21点サンプリング
+   (1.5周期・終端で0に戻る)。折れ線と真の正弦の最大誤差は sway×0.028 ≒ 0.7px で知覚不能。
+   ポップは0→5%で1.12倍まで跳ね10%の1.04を経て15%で1.0に収束＝短く締める
+   (旧実装は1.15倍に達するまで0.42s・戻りに0.7sかけていて間延びしていた)。
+   ★transformは単一プロパティなので全キーフレームに完全な値を書く必要がある。
+   opacityは記述のある最寄りキーフレーム間で補間されるため0/70/100%の3点のみでよい。
+   ★点を間引く/イージングを付けると区間ごとの減速が復活するので触らないこと */
 @keyframes reaction-overlay-rise {
-    0% {
-        transform: translate(-50%, 0) scale(0.8);
-        opacity: 1;
-    }
-    15% {
-        transform: translate(calc(-50% + var(--sway, 24px)), -18vh) scale(1.15);
-        opacity: 1;
-    }
-    40% {
-        transform: translate(calc(-50% - var(--sway, 24px)), -42vh) scale(1);
-        opacity: 1;
-    }
-    70% {
-        transform: translate(calc(-50% + var(--sway, 24px)), -68vh) scale(1);
-        opacity: 1;
-    }
-    100% {
-        transform: translate(-50%, -92vh) scale(1);
-        opacity: 0;
-    }
+      0% { transform: translate(calc(-50% + var(--sway, 24px) *  0.00),   0.0vh) scale(0.80); opacity: 1; }
+      5% { transform: translate(calc(-50% + var(--sway, 24px) *  0.45),  -4.6vh) scale(1.12); }
+     10% { transform: translate(calc(-50% + var(--sway, 24px) *  0.81),  -9.2vh) scale(1.04); }
+     15% { transform: translate(calc(-50% + var(--sway, 24px) *  0.99), -13.8vh) scale(1); }
+     20% { transform: translate(calc(-50% + var(--sway, 24px) *  0.95), -18.4vh) scale(1); }
+     25% { transform: translate(calc(-50% + var(--sway, 24px) *  0.71), -23.0vh) scale(1); }
+     30% { transform: translate(calc(-50% + var(--sway, 24px) *  0.31), -27.6vh) scale(1); }
+     35% { transform: translate(calc(-50% + var(--sway, 24px) * -0.16), -32.2vh) scale(1); }
+     40% { transform: translate(calc(-50% + var(--sway, 24px) * -0.59), -36.8vh) scale(1); }
+     45% { transform: translate(calc(-50% + var(--sway, 24px) * -0.89), -41.4vh) scale(1); }
+     50% { transform: translate(calc(-50% + var(--sway, 24px) * -1.00), -46.0vh) scale(1); }
+     55% { transform: translate(calc(-50% + var(--sway, 24px) * -0.89), -50.6vh) scale(1); }
+     60% { transform: translate(calc(-50% + var(--sway, 24px) * -0.59), -55.2vh) scale(1); }
+     65% { transform: translate(calc(-50% + var(--sway, 24px) * -0.16), -59.8vh) scale(1); }
+     70% { transform: translate(calc(-50% + var(--sway, 24px) *  0.31), -64.4vh) scale(1); opacity: 1; }
+     75% { transform: translate(calc(-50% + var(--sway, 24px) *  0.71), -69.0vh) scale(1); }
+     80% { transform: translate(calc(-50% + var(--sway, 24px) *  0.95), -73.6vh) scale(1); }
+     85% { transform: translate(calc(-50% + var(--sway, 24px) *  0.99), -78.2vh) scale(1); }
+     90% { transform: translate(calc(-50% + var(--sway, 24px) *  0.81), -82.8vh) scale(1); }
+     95% { transform: translate(calc(-50% + var(--sway, 24px) *  0.45), -87.4vh) scale(1); }
+    100% { transform: translate(calc(-50% + var(--sway, 24px) *  0.00), -92.0vh) scale(1); opacity: 0; }
 }
 
 /* 挙手インジケーター。ミュートインジケーター(右下)・ラベル(左下)と重ならないよう
