@@ -132,7 +132,7 @@ class ComChat {
 
         // ヘッダーのロゴ右に表示するユーザー向けバージョン。stableタグ付与時に更新し、
         // 実機確認待ちの間はβを付ける
-        this.APP_VERSION = 'v4.24β';
+        this.APP_VERSION = 'v4.25β';
 
         // コントロールバーの並べ替え(左利き対応・編集モード)
         this.CONTROL_ORDER_STORAGE_KEY = 'comchat-control-order';
@@ -1050,7 +1050,8 @@ class ComChat {
                 clearTimeout(timeout);
                 this.peer.off('open', onOpen);
                 console.error('Peer error:', error);
-                reject(error);
+                // 生のPeerJSエラーをそのまま投げると英語の技術文言が画面に出るため日本語化する
+                reject(new Error(this.describePeerError(error)));
             };
 
             this.peer.on('open', onOpen);
@@ -1107,6 +1108,31 @@ class ComChat {
 
     // Map a getUserMedia failure to an actionable Japanese message. iOS Safari
     // (especially Private Browsing / non-HTTPS) surfaces several distinct causes.
+    // PeerJSの接続確立エラーを日本語化する(describeMediaErrorと同じ作法)。
+    // これを通さずreject(error)すると、呼び出し元の
+    // 'ルーム作成に失敗しました: ' + error.message が英語の生文言("Server error."等)を
+    // そのまま画面に出してしまう。技術的な詳細はconsole.errorにのみ残す
+    describePeerError(err) {
+        switch (err && err.type) {
+            case 'browser-incompatible':
+                return 'このブラウザは通話に対応していません（Safari/Chromeの最新版をお使いください）';
+            case 'unavailable-id':
+                return 'このルームIDは既に使われています。もう一度お試しください';
+            case 'invalid-id':
+            case 'invalid-key':
+                return 'ルームIDが正しくありません';
+            case 'ssl-unavailable':
+                return '安全な接続を確立できません。HTTPSでアクセスしてください';
+            case 'network':
+            case 'server-error':
+            case 'socket-error':
+            case 'socket-closed':
+                return 'サーバーに接続できません。電波状況をご確認ください';
+            default:
+                return 'サーバーに接続できません。時間をおいて再度お試しください';
+        }
+    }
+
     describeMediaError(err) {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             return 'カメラ/マイクを利用できません。HTTPS接続でアクセスしてください';
@@ -1892,7 +1918,15 @@ class ComChat {
 
     confirmEditUsername() {
         const newName = this.usernameEditInput.value.trim();
-        if (newName && newName !== this.username) {
+        // 空欄のまま確定すると無言で元の名前に戻っていた。入口のrequireUsername()が
+        // 同じ条件でエラーを出すようになったため、変更側だけ黙るのは不統一。
+        // 編集モードは閉じずに残し、その場で入れ直せるようにする
+        if (!newName) {
+            this.showStatus('ユーザー名を入力してください', 'error');
+            this.usernameEditInput.focus();
+            return;
+        }
+        if (newName !== this.username) {
             this.username = newName;
             // ユーザー名を次回セッションへ引き継ぐ(空欄やデフォルト名は保存しない)
             if (this.username && this.username !== 'ユーザー') {
@@ -2404,7 +2438,12 @@ class ComChat {
         // trim()はゼロ幅文字(U+200B〜200D/2060/FEFF)を空白と見なさず落とせないため、
         // iOSの入力やコピペで混入すると見かけ空のメモが保存されてしまう。ガード判定の
         // 直前でゼロ幅文字を除去してから空白チェックする(保存する本文自体は変更しない)
-        if (!text.replace(/[\u200B-\u200D\u2060\uFEFF]/g, '').trim()) return;
+        // \u7A7A\u306E\u307E\u307E\u62BC\u3057\u3066\u3082\u7121\u53CD\u5FDC\u3067\u30DC\u30BF\u30F3\u304C\u58CA\u308C\u305F\u3088\u3046\u306B\u898B\u3048\u3066\u3044\u305F\u3002
+        // downloadChatLog\u306E\u300C\u30C1\u30E3\u30C3\u30C8\u306E\u8A18\u9332\u306F\u307E\u3060\u3042\u308A\u307E\u305B\u3093\u300D\u3068\u4F5C\u6CD5\u3092\u63C3\u3048\u308B
+        if (!text.replace(/[\u200B-\u200D\u2060\uFEFF]/g, '').trim()) {
+            this.showStatus('\u30E1\u30E2\u304C\u7A7A\u306E\u305F\u3081\u4FDD\u5B58\u3067\u304D\u307E\u305B\u3093', 'error');
+            return;
+        }
         const blob = new Blob([text], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
         const now = new Date();
@@ -3705,6 +3744,11 @@ class ComChat {
             const file = e.target.files[0];
             if (!file) return;
             e.target.value = '';
+            // カメラオフ画像のアップロードと同じく、画像以外は理由を伝えて弾く
+            if (!file.type.startsWith('image/')) {
+                this.showStatus('画像ファイルを選択してください', 'error');
+                return;
+            }
             const gen = ++this._bgImageSelectGen;
             try {
                 const dataURL = await this.resizeImageToDataURL(file);
@@ -3866,6 +3910,12 @@ class ComChat {
             const file = e.target.files[0];
             if (!file) return;
             e.target.value = '';
+            // accept="image/*"をすり抜けて画像以外が選ばれると、従来はonerror→console.warnのみで
+            // 画面上は無反応だった。ドロップ経路と同じく理由を伝える
+            if (!file.type.startsWith('image/')) {
+                this.showStatus('画像ファイルを選択してください', 'error');
+                return;
+            }
             try {
                 // 選択直後にsetCameraOffImageへは渡さず、まず構図調整エディタを開く
                 // (焼き込みはconfirmCameraOffImageEditで行う)

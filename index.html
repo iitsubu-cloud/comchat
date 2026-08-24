@@ -459,7 +459,7 @@
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
     <script src="js/vendor/qrcode.js"></script>
-    <script src="js/app.js?v=138"></script>
+    <script src="js/app.js?v=139"></script>
 
     <script>
         // タブを閉じる/ページ遷移時にリソースだけ解放（UI操作は不要）
@@ -552,7 +552,12 @@
                  (空のバーで測ると1行に見え、誤った上限を導いてしまう) */
             padding: 8px 10px;
             border-radius: 4px;
-            margin-left: 4px;
+            /* 隣接ボタンとの間隔。ルームID文字自体もタップ対象(表示/非表示トグル)なので
+               3つの隙間すべてが誤タップに効く。375px幅でQRボタンの右に残る余白は15.5pxで、
+               3隙間×(6-4)=6px使い9.5px残る。実測の崖: 容器355px相当まで狭めても6pxは2行を
+               保つが、7px以上は3行(74.3→96.8px)に崩れる。実機iOSはシステムフォントで
+               文字幅が異なるためこの余裕を確保しておく */
+            margin-left: 6px;
             vertical-align: middle;
             transition: background 0.15s, border-color 0.15s;
             line-height: 1;
