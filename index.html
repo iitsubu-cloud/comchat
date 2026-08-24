@@ -459,7 +459,7 @@
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
     <script src="js/vendor/qrcode.js"></script>
-    <script src="js/app.js?v=136"></script>
+    <script src="js/app.js?v=137"></script>
 
     <script>
         // タブを閉じる/ページ遷移時にリソースだけ解放（UI操作は不要）
@@ -484,7 +484,9 @@
         window.addEventListener('error', (e) => {
             console.error('Global error:', e.error);
             if (window.comChat && e.error) {
-                window.comChat.showStatus('エラーが発生しました: ' + (e.error.message || 'Unknown error'), 'error');
+                // 技術的なメッセージ(英語の生の例外文言)は画面に出さずconsoleにのみ残す。
+                // 他のエラー表示(describeMediaError等)と同じく日本語の行動指示に統一する
+                window.comChat.showStatus('エラーが発生しました。問題が続く場合はページを再読み込みしてください', 'error');
             }
         });
     </script>
@@ -540,7 +542,12 @@
             border: 1px solid transparent;
             cursor: pointer;
             font-size: 0.85em;
-            padding: 3px 5px;
+            /* ルームIDコピー・招待リンク・QR・名前変更のタップ領域を広げる(26x22 → 26x32px)。
+               横パディングは5pxが上限:375px幅ではルーム情報バーに横の余白がもう無く、
+               6pxにするとバーが2行に折り返して高さが28px→74pxへ膨張し映像面積を大きく削る
+               (実測済み)。縦方向は折り返しに影響しないため8pxまで広げ、バーの増加は
+               +10px(28→38px)に収めている。この2つの数値は実測に基づくので安易に上げないこと */
+            padding: 8px 5px;
             border-radius: 4px;
             margin-left: 4px;
             vertical-align: middle;
@@ -607,7 +614,11 @@
             background: white;
             border-radius: 20px;
             padding: 32px 28px 24px;
-            width: 260px;
+            /* 260pxだとボタン内の文字領域が75pxちょうどで「キャンセル」の自然幅75.5pxに
+               0.5px足りず2行に折り返す(ボタン高40→68px。実測値)。280pxで文字領域85pxとなり
+               9.5pxの余裕ができる。270px(領域80px)でも1行に収まるが余裕4.5pxしかなく、
+               実機のiOSはArialでなくシステムフォントで描画されるため280pxを採る */
+            width: 280px;
             text-align: center;
             box-shadow: 0 24px 64px rgba(0, 0, 0, 0.25);
             animation: modalBoxIn 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);

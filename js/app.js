@@ -129,7 +129,7 @@ class ComChat {
 
         // ヘッダーのロゴ右に表示するユーザー向けバージョン。stableタグ付与時に更新し、
         // 実機確認待ちの間はβを付ける
-        this.APP_VERSION = 'v4.22β';
+        this.APP_VERSION = 'v4.23β';
 
         // コントロールバーの並べ替え(左利き対応・編集モード)
         this.CONTROL_ORDER_STORAGE_KEY = 'comchat-control-order';
@@ -273,13 +273,19 @@ class ComChat {
             else if (e.key === 'Escape') this.exitUsernameEdit();
         });
 
-        this.createRoomBtn.addEventListener('click', () => this.showPreCallDialog('create'));
+        this.createRoomBtn.addEventListener('click', () => {
+            if (!this.requireUsername()) return;
+            this.showPreCallDialog('create');
+        });
         this.joinRoomBtn.addEventListener('click', () => this.showJoinInput());
         // join-group is a <form>: both the submit button tap and the keyboard's
         // Enter/Go key fire 'submit'. This is the iOS-friendly path so the
         // confirm button doesn't need to be visible behind the keyboard.
         this.joinGroup.addEventListener('submit', (e) => {
             e.preventDefault();
+            // 名前はページ最上部の入力欄なので先に検証する(招待リンク経由ではルームIDが
+            // 既に埋まっていて名前だけ未入力、というケースが最も多い)
+            if (!this.requireUsername()) return;
             const roomId = this.joinRoomIdInput.value.trim();
             if (!roomId) { this.showStatus('ルームIDを入力してください', 'error'); return; }
             // joinRoomと同じサニタイズで事前検証する。全角数字等でIDが空になる入力を
@@ -854,6 +860,22 @@ class ComChat {
         const ready = this.joinRoomIdInput.value.trim().length > 0;
         this.confirmJoinBtn.classList.toggle('btn-ready', ready);
         this.joinRoomBtn.classList.toggle('btn-dimmed', ready);
+    }
+
+    // ユーザー名の必須チェック。作成・参加の両方で、プレコール(カメラ取得・ボタン無効化)へ
+    // 進む前に弾くこと(ルームIDの事前検証と同じ理由)。空欄のまま参加できると全員が
+    // デフォルト名「ユーザー」で並び、画面上で誰が誰か区別できなくなる。
+    // 入力欄の値自体は書き換えず、前後の空白を落とした値をthis.usernameの正とする
+    requireUsername() {
+        const input = document.getElementById('username');
+        const name = (input?.value || '').trim();
+        if (!name) {
+            this.showStatus('ユーザー名を入力してください', 'error');
+            input?.focus();
+            return false;
+        }
+        this.username = name;
+        return true;
     }
 
     // 招待リンク(?room=xxx)経由での起動: 参加フォームにルームIDを差し込んで名前入力へ
@@ -3826,7 +3848,7 @@ class ComChat {
             e.stopPropagation();
             this.removeCameraOffImage();
             this.cameraOffImagePanel.classList.add('hidden');
-            this.showStatus('カメラオフ時の画像を解除しました', 'connected');
+            this.showStatus('カメラオフ時の画像を削除しました', 'connected');
         });
 
         // カメラオフ画像パネルへの画像ドロップ(通常状態・編集中どちらでも受け付ける)。
@@ -3884,6 +3906,11 @@ class ComChat {
     // iPhone等でのドラッグ描画・メモリ負荷が大きいため。最終出力は640x360なので
     // 1280あれば画質は落ちない)→構図調整エディタを開く
     startCameraOffImageEdit(file) {
+        // 呼び出し元が2箇所(inputのchange・ドロップ)あり画像を続けて選ぶと並走しうる。
+        // デコード完了順は選択順と一致しないため、世代トークンで最後の選択だけを
+        // エディタへ通す(_bgFilterGenと同じパターン)
+        this._cameraOffEditGen = (this._cameraOffEditGen || 0) + 1;
+        const gen = this._cameraOffEditGen;
         return new Promise((resolve, reject) => {
             const img = new Image();
             const url = URL.createObjectURL(file);
@@ -3904,6 +3931,9 @@ class ComChat {
                 // と焼き込み時のdrawImageソースを同じ要素で共有できるようにするため
                 const editImg = new Image();
                 editImg.onload = () => {
+                    // 待機中に新しい画像が選ばれていたら、後発の呼び出しに任せて退く。
+                    // (resolveはする。呼び出し元のawaitが未解決のまま残らないように)
+                    if (gen !== this._cameraOffEditGen) { resolve(); return; }
                     this.openCameraOffImageEditor(editImg);
                     resolve();
                 };
