@@ -50,6 +50,9 @@ class ComChat {
         this._bgFilterAutoDisableCount = 0;  // セッション内の自動オフ回数
         this._bgFilterRuntimeBlocked = false; // 2回検知後はそのセッション無効で確定
         this.bgImage = null;
+        // 背景画像の選択(プリセット/アップロード/履歴/前回設定の復元)は非同期デコードを挟むため、
+        // 完了順が選択順と一致しない。世代トークンで最後の選択だけをbgImageへ反映する
+        this._bgImageSelectGen = 0;
         this.bgPresets = {};
         this.bgHistory = [];
         this.bgImagePanel = null;
@@ -129,7 +132,7 @@ class ComChat {
 
         // ヘッダーのロゴ右に表示するユーザー向けバージョン。stableタグ付与時に更新し、
         // 実機確認待ちの間はβを付ける
-        this.APP_VERSION = 'v4.23β';
+        this.APP_VERSION = 'v4.24β';
 
         // コントロールバーの並べ替え(左利き対応・編集モード)
         this.CONTROL_ORDER_STORAGE_KEY = 'comchat-control-order';
@@ -914,6 +917,11 @@ class ComChat {
             this.showStatus('ルームを作成しました。ルームIDを友達に共有してください', 'connected');
 
         } catch (error) {
+            // cancelPreCall/hangupと同様、進行中のフィルター初回セットアップも世代トークンで
+            // 無効化する。これを欠くと、MediaPipe読み込み待ち中に作成が失敗した場合に
+            // セットアップが完走し、ウェルカム画面で「適用しました」誤トースト＋描画ループが
+            // 回り続ける(iPhoneのバッテリーを食う)
+            this._bgFilterGen = (this._bgFilterGen || 0) + 1;
             this.stopBgFilterLoop();
             this.cleanupBgFilterResources();
             this.teardownSpeakingDetection();
@@ -950,6 +958,8 @@ class ComChat {
             // 通常はform submit側の事前検証で弾かれるが、万一ここに来た場合は
             // プリコールで取得したカメラ/フィルターを解放しボタンを復元する(詰み防止の保険)。
             // この早期returnはtry/catchの前なのでcatchのクリーンアップが走らない。
+            // 進行中のフィルターセットアップも世代トークンで無効化する(cancelPreCall/hangupと同様)
+            this._bgFilterGen = (this._bgFilterGen || 0) + 1;
             this.stopBgFilterLoop();
             this.cleanupBgFilterResources();
             this.bgFilterType = 'none';
@@ -979,6 +989,8 @@ class ComChat {
             this.updateRoomInfo();
 
         } catch (error) {
+            // 進行中のフィルター初回セットアップを無効化する(createRoomのcatchと同じ理由)
+            this._bgFilterGen = (this._bgFilterGen || 0) + 1;
             this.stopBgFilterLoop();
             this.cleanupBgFilterResources();
             this.teardownSpeakingDetection();
@@ -1597,7 +1609,8 @@ class ComChat {
                 if (senderId !== this.roomId) break;
                 data.peers.forEach(({ id, username }) => {
                     if (!this.connections.has(id) && id !== this.peer.id) {
-                        if (username) this.usernames.set(id, username);
+                        // user-joinと同じく巨大ユーザー名によるDOM肥大を防ぐため50字に切り詰める
+                        if (username) this.usernames.set(id, String(username).slice(0, 50));
                         this.connectToPeer(id);
                     }
                 });
@@ -1623,6 +1636,8 @@ class ComChat {
                 }
                 break;
             case 'hand-state': {
+                // reaction/recording-stateと同様、トーストを出すメッセージなので連投対策が要る
+                if (!this._allowMessage(senderId)) break;
                 this.handStates.set(senderId, data.raised);
                 this.setHandIndicator(senderId, data.raised);
                 if (data.raised) {
@@ -2826,6 +2841,16 @@ class ComChat {
                 this.renderRoomIdDisplay();
             }
 
+            // getDisplayMediaのOS選択ダイアログ待ちの間に、自分の操作と無関係な理由で
+            // 退室しうる(ホストのroom-closed受信・再接続失敗)。hangupはlocalStreamをnullにするが、
+            // この時点ではまだcurrentScreenStreamへ代入していないためhangup側の後片付け
+            // (if (this.currentScreenStream) stopScreenShare())の対象外＝取得済みストリームが
+            // 孤立し、OSの画面共有インジケーターが点いたまま残る。ここで自分で止めて退く
+            if (!this.localStream || this.isLeaving) {
+                screenStream.getTracks().forEach(t => t.stop());
+                return;
+            }
+
             const screenVideoTrack = screenStream.getVideoTracks()[0];
             const cameraVideoTrack = this.localStream.getVideoTracks()[0];
 
@@ -3659,7 +3684,9 @@ class ComChat {
             el.addEventListener('click', async () => {
                 this.clearBgPanelActive();
                 el.classList.add('active');
+                const gen = ++this._bgImageSelectGen;
                 const newBitmap = await this.generatePresetBitmap(name);
+                if (this._isStaleBgImageSelect(gen, newBitmap)) return;
                 if (this.bgImage && !Object.values(this.bgPresets).includes(this.bgImage)) {
                     this.bgImage.close();
                 }
@@ -3678,6 +3705,7 @@ class ComChat {
             const file = e.target.files[0];
             if (!file) return;
             e.target.value = '';
+            const gen = ++this._bgImageSelectGen;
             try {
                 const dataURL = await this.resizeImageToDataURL(file);
                 this.addToHistory(dataURL);
@@ -3685,6 +3713,7 @@ class ComChat {
                 // Mark the newly added item (index 0) as active
                 document.querySelector('#bg-history-grid .bg-history-item')?.classList.add('active');
                 const newBitmap = await this.loadBgFromDataURL(dataURL);
+                if (this._isStaleBgImageSelect(gen, newBitmap)) return;
                 if (this.bgImage && !Object.values(this.bgPresets).includes(this.bgImage)) {
                     this.bgImage.close();
                 }
@@ -3781,7 +3810,9 @@ class ComChat {
             item.addEventListener('click', async () => {
                 this.clearBgPanelActive();
                 item.classList.add('active');
+                const gen = ++this._bgImageSelectGen;
                 const newBitmap = await this.loadBgFromDataURL(dataURL);
+                if (this._isStaleBgImageSelect(gen, newBitmap)) return;
                 if (this.bgImage && !Object.values(this.bgPresets).includes(this.bgImage)) {
                     this.bgImage.close();
                 }
@@ -4264,9 +4295,6 @@ class ComChat {
         this.maskCtx.putImageData(this.maskImageData, 0, 0);
         result.close?.();
 
-        // 破綻検知: 「人物がほぼ0%」かつ「起動後一度も正常分離せず」が継続したら自動オフ
-        this.checkSegmentationHealth(personCount / maskData.length);
-
         // Scale-down/up smoothing softens jagged mask boundaries
         const mw = this.maskSmallCanvas.width, mh = this.maskSmallCanvas.height;
         this.maskSmallCtx.imageSmoothingEnabled = true;
@@ -4343,6 +4371,13 @@ class ComChat {
         ctx.globalCompositeOperation = 'source-over';
         ctx.drawImage(this.personCanvas, 0, 0, w, h);
         ctx.globalCompositeOperation = 'source-over';
+
+        // 破綻検知: 「人物がほぼ0%」かつ「起動後一度も正常分離せず」が継続したら自動オフ。
+        // 必ず合成処理が全て終わった後に呼ぶこと。途中で呼ぶと、破綻確定時に同期的に走る
+        // applyBgFilter('none')→cleanupBgFilterResourcesがmaskSmallCanvas等をnull化し、
+        // 直後の合成コードがnull参照で例外→呼び出し元の空catchに握り潰され、
+        // そのフレームのImageBitmapも解放されないまま残る
+        this.checkSegmentationHealth(personCount / maskData.length);
     }
 
     // 破綻検知のパラメータ
@@ -4419,9 +4454,26 @@ class ComChat {
         this.bgFilterAnimId = requestAnimationFrame(loop);
     }
 
+    // 背景画像の選択がawaitから戻った時点で、既に後発の選択が確定していないかを判定する。
+    // stale なら取得済みビットマップを解放して呼び出し元に退いてもらう。
+    // 重要: プリセットのビットマップは bgPresets が所有する共有インスタンスなので閉じない。
+    // (閉じたビットマップがキャッシュに残ると、次に同じプリセットを選んだとき壊れた画像が返る)
+    _isStaleBgImageSelect(gen, bitmap) {
+        if (gen === this._bgImageSelectGen) return false;
+        if (bitmap && !Object.values(this.bgPresets).includes(bitmap)) bitmap.close?.();
+        return true;
+    }
+
     startCSSFilterLoop() {
+        // startBgFilterLoopと同じ世代トークンを共有する。これが無いと、MediaPipe読み込み待ち中に
+        // プレコールでカメラをONにした場合(precallToggleVideoはimageSegmenter未設定なら
+        // こちらを呼ぶ)、読み込み完了後にstartBgFilterLoopが起動して2本のループが同じ
+        // bgFilterCanvasへ描き続ける。両者はbgFilterAnimIdを奪い合うためstopBgFilterLoopの
+        // cancelAnimationFrameでは片方しか止まらず、粗いぼかしと正しい合成が交互に出る
+        // ちらつきがフィルターをOFFにするまで直らない
+        const gen = ++this._bgFilterLoopGen;
         const draw = () => {
-            if (this.bgFilterType === 'none' || !this.bgFilterCtx) return;
+            if (this._bgFilterLoopGen !== gen || this.bgFilterType === 'none' || !this.bgFilterCtx) return;
             // カメラオフ中は常に黒を描き、当該フレームの描画はスキップする
             // (iOS Safari等でdisabledトラックの映像フレームが固着するのを防ぐ)
             const camTrack = this.localStream && this.localStream.getVideoTracks()[0];
@@ -4434,7 +4486,8 @@ class ComChat {
             if (this.imageCapture) {
                 // ImageCapture: grab frame asynchronously, draw when ready
                 this.imageCapture.grabFrame().then(bitmap => {
-                    if (this.bgFilterType === 'none' || !this.bgFilterCtx) { bitmap.close(); return; }
+                    // 待機中に世代が進んでいたら、旧世代のフレームで新しい描画を上書きしない
+                    if (this._bgFilterLoopGen !== gen || this.bgFilterType === 'none' || !this.bgFilterCtx) { bitmap.close(); return; }
                     const vw = bitmap.width;
                     const vh = bitmap.height;
                     if (vw > 0 && this.bgFilterCanvas.width !== vw) {
@@ -4819,6 +4872,10 @@ class ComChat {
     // 端末非対応・データ不正・読み込み失敗などはすべて無言で諦め、プリコールの
     // 表示自体は妨げない(fire-and-forgetで呼ばれる想定)
     async restoreBgFilterPref() {
+        // 復元も背景画像の選択の一種なので世代トークンに参加する。復元のデコード待ち中に
+        // ユーザーが自分でパネルから別の画像を選んだ場合、後から解決した復元側が
+        // ユーザーの選択を古い保存値で上書きしてしまうのを防ぐ
+        const gen = ++this._bgImageSelectGen;
         try {
             const saved = localStorage.getItem('comchat_bg_filter');
             if (!saved) return;
@@ -4845,6 +4902,8 @@ class ComChat {
                     bm?.close?.();
                     return;
                 }
+                // ユーザーが復元待ちの間に自分で別の画像を選んでいたら、その選択を尊重して退く
+                if (this._isStaleBgImageSelect(gen, bm)) return;
                 if (this.bgImage && !Object.values(this.bgPresets).includes(this.bgImage)) {
                     this.bgImage.close();
                 }
@@ -4860,6 +4919,7 @@ class ComChat {
                     bm?.close?.();
                     return;
                 }
+                if (this._isStaleBgImageSelect(gen, bm)) return;
                 if (this.bgImage && !Object.values(this.bgPresets).includes(this.bgImage)) {
                     this.bgImage.close();
                 }
@@ -5463,6 +5523,10 @@ class ComChat {
         }
         this.deviceModal.classList.remove('hidden');
         await this.refreshDeviceOptions();
+        // enumerateDevices待ちの間にモーダルが閉じられていた場合、closeDeviceModalは
+        // まだ未設定の_onDeviceChangeを解除できずに終わっている。ここで無条件に登録すると
+        // 閉じた後もdevicechangeを購読し続けるため、閉じられていたら退く
+        if (this.deviceModal.classList.contains('hidden')) return;
         // モーダルを開いている間だけ購読する(常時購読すると不要な再構築が走り続けるため)
         if (!this._onDeviceChange) {
             this._onDeviceChange = () => this.refreshDeviceOptions();

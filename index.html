@@ -459,7 +459,7 @@
     <!-- Scripts -->
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
     <script src="js/vendor/qrcode.js"></script>
-    <script src="js/app.js?v=137"></script>
+    <script src="js/app.js?v=138"></script>
 
     <script>
         // タブを閉じる/ページ遷移時にリソースだけ解放（UI操作は不要）
@@ -542,12 +542,15 @@
             border: 1px solid transparent;
             cursor: pointer;
             font-size: 0.85em;
-            /* ルームIDコピー・招待リンク・QR・名前変更のタップ領域を広げる(26x22 → 26x32px)。
-               横パディングは5pxが上限:375px幅ではルーム情報バーに横の余白がもう無く、
-               6pxにするとバーが2行に折り返して高さが28px→74pxへ膨張し映像面積を大きく削る
-               (実測済み)。縦方向は折り返しに影響しないため8pxまで広げ、バーの増加は
-               +10px(28→38px)に収めている。この2つの数値は実測に基づくので安易に上げないこと */
-            padding: 8px 5px;
+            /* ルームIDコピー・招待リンク・QR・名前変更のタップ領域を広げる(26x22 → 36x32px)。
+               375px幅での実測(ルームID9文字・参加者1/6・名前ありの実データ):
+                 3px 5px → バー55.4px / 8px 5px → 74.3px / 8px 10px → 74.3px
+               ルーム情報バーは中身が1行に491px必要なのに347pxしか無く、パディングに関係なく
+               最初から2行に折り返している。そのため横を5pxに絞ってもバー高さは変わらず、
+               ボタンが小さくなるだけ損だった。縦の代償が同じなので横も10pxまで広げる。
+               ※測定時は必ずupdateRoomInfo()でルームID等を実際に描画してから測ること
+                 (空のバーで測ると1行に見え、誤った上限を導いてしまう) */
+            padding: 8px 10px;
             border-radius: 4px;
             margin-left: 4px;
             vertical-align: middle;
