@@ -4,7 +4,7 @@
 
 ComChatは、友達や同僚と簡単にビデオ通話ができる、完全無料のWebアプリケーションです。
 
-![ComChat Logo](https://via.placeholder.com/200x100/667eea/ffffff?text=ComChat)
+![ComChat Logo](images/logo.svg)
 
 ## ✨ 特徴
 
@@ -153,6 +153,14 @@ ComChatはオープンソースプロジェクトです。以下の方法でご�
 4. ブランチにプッシュ (`git push origin feature/amazing-feature`)
 5. Pull Requestを作成
 
+## 🔐 プライバシーと免責
+
+- 映像・音声・チャット・送受信ファイルは WebRTC による P2P 接続で参加者同士が直接やり取りされ、運営側のサーバーには保存されません。
+- ただし、接続の確立（シグナリング）には [PeerJS](https://peerjs.com/) 公式の無料クラウドサーバーを利用しています。また、NAT越えのためブラウザ既定の公開STUNサーバーも使用されます。これらは第三者が運営するサービスです。
+- ユーザー名・背景フィルター設定・背景画像の履歴・カメラオフ時の画像は、ブラウザの `localStorage` に端末内保存されます（キー: `comchat_username`, `comchat_bg_filter`, `comchat_bg_history`, `comchat_cameraoff_image`）。サーバーには送信されません。
+- 録音機能は端末内で処理され、生成された音声ファイルは利用者自身が保存します。
+- 本アプリは無保証で提供されます。利用によって生じたいかなる損害についても作者は責任を負いません。業務上の機密情報や重要な用途での利用は想定していません。
+
 ## 📄 ライセンス
 
 このプロジェクトはMITライセンスの下で公開されています。詳細は[LICENSE](LICENSE)ファイルをご覧ください。
@@ -166,9 +174,8 @@ ComChatはオープンソースプロジェクトです。以下の方法でご�
 ## 📞 お問い合わせ
 
 プロジェクトに関するお問い合わせ：
-- 📧 Email: [プロジェクトメール]
-- 🐙 GitHub: [リポジトリURL]
-- 💬 Discord: [Discordサーバー]
+- 🐙 GitHub: https://github.com/iitsubu-cloud/comchat
+- 🐛 Issues: https://github.com/iitsubu-cloud/comchat/issues
 
 ---
 

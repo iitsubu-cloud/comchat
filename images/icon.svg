@@ -1,0 +1,18 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="ComChat">
+  <defs>
+    <linearGradient id="comchat-icon-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0891b2"/>
+      <stop offset="100%" stop-color="#0d9488"/>
+    </linearGradient>
+  </defs>
+  <!-- maskable 用に背景は全面塗り。マークは中央60%以内に収めセーフゾーンを確保する -->
+  <rect x="0" y="0" width="512" height="512" fill="url(#comchat-icon-bg)"/>
+  <!-- 後ろの吹き出し(半透明) -->
+  <path d="M196 132h160a44 44 0 0 1 44 44v84a44 44 0 0 1-44 44h-12v46l-50-46h-98a44 44 0 0 1-44-44v-84a44 44 0 0 1 44-44z"
+        fill="#ffffff" fill-opacity="0.32"/>
+  <!-- 手前の吹き出し(不透明)＝ビデオ通話を表すカメラ窓を内側に置く -->
+  <path d="M136 196h150a42 42 0 0 1 42 42v80a42 42 0 0 1-42 42h-92l-58 44v-44h-0.4a42 42 0 0 1-42-42v-80a42 42 0 0 1 42-42z"
+        fill="#ffffff"/>
+  <rect x="150" y="238" width="96" height="76" rx="16" fill="#0d9488"/>
+  <path d="M256 262l38-24v76l-38-24z" fill="#0d9488"/>
+</svg>

@@ -723,12 +723,33 @@ body {
     background: rgba(255, 255, 255, 0.2);
     border: none;
     color: white;
-    width: 28px;
-    height: 28px;
+    /* 28px はiOSの推奨タップ領域44ptを大きく下回っており、モバイルでチャットを閉じる
+       唯一の手段がこのボタンのため44pxへ拡大した。
+       実測(375px幅・未読バッジ"99"＋メモドット表示＝最も横幅を食う状態)＝
+       .chat-header の内側351pxに対し 28px時は使用236.7px/余白114.3px、44px化後は余白82.3pxで折り返さない。
+       縦は 44px→60px(+16px)。この16pxはチャット本文の高さから引かれる。
+       ★.chat-header は justify-content:space-between なので ⬇ と ✕ の間隔は余白の自動分配で決まる
+         (44px化後の実測で約45px)。margin-right を足して間隔を作る必要はない。
+       ★測定は必ずバッジを表示した実データで行うこと。空だとタブ幅が狭く出て余白を過大評価する
+         (セッション62で同種の測定ミスをしている) */
+    width: 44px;
+    height: 44px;
     border-radius: 50%;
-    font-size: 0.9em;
+    /* 44pxの円に対し0.9em(約13.7px)では字が小さすぎるため上げる */
+    font-size: 1.15em;
     line-height: 1;
     cursor: pointer;
+    transition: background 0.15s;
+}
+
+/* ✕と⬇は隣接していて誤タップの結果が非対称(✕=チャットが閉じる/⬇=ファイル保存)なため、
+   ホバー/押下のフィードバックを付けてどちらに触れているか分かるようにする */
+.chat-close-btn:hover {
+    background: rgba(255, 255, 255, 0.35);
+}
+
+.chat-close-btn:active {
+    background: rgba(255, 255, 255, 0.45);
 }
 
 /* チャットログ保存ボタンは閉じるボタンと見た目を共有しつつ、PC/モバイル問わず常に表示する
@@ -837,7 +858,9 @@ body {
     background: none;
     border: none;
     cursor: pointer;
-    padding: 6px;
+    /* SVG18px＋padding6px＝30pxでタップ領域が不足していた。
+       padding11pxで40px角にする(アイコンの見た目の大きさは18pxのまま変えない) */
+    padding: 11px;
     border-radius: 50%;
     color: #0891b2;
     display: flex;
@@ -2153,6 +2176,13 @@ body {
     line-height: 1.2;
     cursor: pointer;
     transition: background 0.15s, color 0.15s;
+}
+
+/* 非アクティブなタブにホバーの手応えが無かったため追加。
+   .activeの背景(#0f766e)より薄く、押下前の状態と混同しない濃度にする */
+.chat-tab-btn:hover:not(.active) {
+    background: rgba(255, 255, 255, 0.15);
+    color: white;
 }
 
 .chat-tab-btn.active {
