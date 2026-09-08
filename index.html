@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Klee+One:wght@400;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/style.css?v=73">
+    <link rel="stylesheet" href="css/style.css?v=74">
     <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>">
     <!-- PWA（ホーム画面に追加）。Service Workerは意図的に入れていない：
          既存の ?v= 方式と二重のキャッシュ層になり「更新が端末に届かない」事故の温床になるため。 -->
@@ -471,7 +471,7 @@
          js/vendor/peerjs.min.js は npm peerjs@1.5.0 の dist と バイト同一（検証手順は js/vendor/README.md）。 -->
     <script src="js/vendor/peerjs.min.js?v=1.5.0"></script>
     <script src="js/vendor/qrcode.js"></script>
-    <script src="js/app.js?v=141"></script>
+    <script src="js/app.js?v=142"></script>
 
     <script>
         // タブを閉じる/ページ遷移時にリソースだけ解放（UI操作は不要）
@@ -724,6 +724,18 @@
            どちらでも視認できるティール系にする */
         #hangup-modal.host-leave-warn .hangup-modal-btn.cancel {
             animation: cancel-pulse 2s ease-in-out infinite;
+        }
+
+        /* OSの「視差効果を減らす/動きを減らす」がONの端末では脈動を止める。ただし
+           animation:none だけにすると 0%/100% が透明なグローのため強調が完全に消える。
+           これは「参加者を残したまま退室しようとしている」という注意喚起なので、
+           脈動のピーク相当のグローを静的に残すこと。
+           (他の抑制は css/style.css の同名メディアクエリにまとめてある) */
+        @media (prefers-reduced-motion: reduce) {
+            #hangup-modal.host-leave-warn .hangup-modal-btn.cancel {
+                animation: none;
+                box-shadow: 0 0 10px 2px rgba(13, 148, 178, 0.6);
+            }
         }
 
         @keyframes cancel-pulse {

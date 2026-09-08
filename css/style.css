@@ -2629,3 +2629,53 @@ body.in-call .qr-invite-url {
         padding: 22px 18px 18px;
     }
 }
+
+/* ===== 動きの抑制: OSの「視差効果を減らす/動きを減らす」がONの端末のみ =====
+   既存のアニメーション宣言には一切手を入れず、このブロックを追加するだけにしている。
+   OS設定がOFFの端末ではブロック自体が適用されないため、従来の見え方が完全に維持される。
+
+   ★一括で animation-duration を 0.01ms に潰す定番スニペットは絶対に使わないこと★
+   .toast(1098行)と .reaction-overlay-item(1528行)は forwards 付きで最終キーフレームが
+   opacity:0 のため、一括適用すると即座に最終状態へ飛んで固定され、
+   トーストとリアクションが一切見えなくなる。
+
+   ★止めるのは「動き」だけ。強調表示は静的に残すこと★
+   btn-breathe と cancel-pulse はグローがキーフレーム内にしか無いため、
+   animation:none だけにすると強調そのものが消える。
+
+   対象は「延々と続く動き(無限ループ)」と「画面を大きく横切る移動」に限定する。
+   モーダルの登場・トーストのスライドイン等の一瞬の動きは意図的に残している。 */
+@media (prefers-reduced-motion: reduce) {
+    /* 参加ボタンの呼吸。0%/100%のグローを静的に再現して強調は保つ */
+    .btn.btn-ready {
+        animation: none;
+        box-shadow: 0 6px 18px rgba(8, 145, 178, 0.45);
+    }
+
+    /* 並べ替え中のブルブル。モード自体は #reorder-toolbar の
+       「ドラッグで並べ替え／完了」表示で判別できるため動きは不要 */
+    .controls.reorder-mode .ctrl-item { animation: none; }
+
+    /* 録音中の●は点滅を止めて常時点灯にする(基本スタイルの opacity:1 に戻る)。
+       プライバシー表示なので「消えている瞬間が無い」方がむしろ望ましい */
+    #recording-indicator .rec-blink-dot { animation: none; }
+
+    /* リアクションは画面の約92%を縦断するアプリ最大の移動。ただし animation:none にすると
+       animationend が発火せず、JS(showReactionOverlay)の削除が保険タイマー(3300ms)頼みになり
+       絵文字がその場に固まって残る。そこで「静止したままフェードする」同じ長さ(2.8s)の
+       アニメーションへ差し替え、削除の流れを従来どおりに保つ。
+       水平中央寄せは元々 rise キーフレームの translate(-50%) が担っていたため、
+       ここで transform を明示しないと右へずれる(JSは left と --sway しか設定しない) */
+    .reaction-overlay-item {
+        transform: translateX(-50%);
+        animation: reaction-overlay-fade 2.8s linear forwards;
+    }
+}
+
+/* 上記 reduce 専用。通常時は使われない */
+@keyframes reaction-overlay-fade {
+    0%   { opacity: 0; }
+    6%   { opacity: 1; }
+    80%  { opacity: 1; }
+    100% { opacity: 0; }
+}
